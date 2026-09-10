@@ -1,0 +1,4148 @@
+﻿================================================================================
+FILE: .\backend\package.json
+SIZE: 0.84 KB
+================================================================================
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.5",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "multer": "^2.0.2",
+    "sequelize": "^6.37.8",
+    "sharp": "^0.35.4",
+    "sqlite3": "^5.1.7",
+    "tar": "^7.4.3",
+    "uuid": "^11.0.5",
+    "validator": "^13.15.20",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "glob": "^10.4.5",
+    "nodemon": "^3.1.9",
+    "rimraf": "^5.0.10"
+  }
+}
+
+
+================================================================================
+FILE: .\backend\scripts\check-db.js
+SIZE: 2.25 KB
+================================================================================
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+
+const dbPath = path.join(__dirname, '../data/musica_eventi_e_documenti_web.db');
+
+console.log('ðŸ“‚ Database path:', dbPath);
+console.log('');
+
+const db = new sqlite3.Database(dbPath, (err) => {
+  if (err) {
+    console.error('âŒ Errore:', err.message);
+    process.exit(1);
+  }
+  console.log('âœ… Database aperto con successo!\n');
+});
+
+// Ottieni tutte le tabelle
+db.all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'", [], (err, tables) => {
+  if (err) {
+    console.error('âŒ Errore:', err.message);
+    db.close();
+    return;
+  }
+
+  console.log(`ðŸ“‹ Tabelle trovate: ${tables.length}\n`);
+
+  tables.forEach((table, index) => {
+    const tableName = table.name;
+    console.log(`ðŸ“Œ TABELLA ${index + 1}: ${tableName}`);
+    console.log('â•'.repeat(50));
+
+    // Ottieni le colonne
+    db.all(`PRAGMA table_info(${tableName})`, [], (err, columns) => {
+      if (err) {
+        console.error('âŒ Errore:', err.message);
+        return;
+      }
+
+      console.log('Colonne:');
+      columns.forEach(col => {
+        const pk = col.pk ? 'ðŸ”‘ PK' : '';
+        const notnull = col.notnull ? 'NOT NULL' : '';
+        const def = col.dflt_value ? `default: ${col.dflt_value}` : '';
+        console.log(`  - ${col.name} (${col.type}) ${pk} ${notnull} ${def}`);
+      });
+
+      // Ottieni un record di esempio
+      db.get(`SELECT * FROM ${tableName} LIMIT 1`, [], (err, row) => {
+        if (err) {
+          console.error('âŒ Errore:', err.message);
+          return;
+        }
+
+        console.log('\nðŸ“ Record di esempio:');
+        if (row) {
+          Object.keys(row).forEach(key => {
+            const value = row[key];
+            const display = value !== null && value !== undefined ? String(value).substring(0, 50) : 'NULL';
+            console.log(`  ${key}: ${display}${String(value).length > 50 ? '...' : ''}`);
+          });
+        } else {
+          console.log('  (nessun record trovato)');
+        }
+        console.log('\n');
+      });
+    });
+  });
+
+  // Chiudi dopo aver finito
+  setTimeout(() => {
+    db.close(() => {
+      console.log('âœ… Database chiuso.');
+    });
+  }, 1000);
+});
+
+================================================================================
+FILE: .\backend\src\config\database.js
+SIZE: 2.49 KB
+================================================================================
+/**
+ * 📁 PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\config\database.js
+ *
+ * 📝 DESCRIZIONE: Configurazione del database Sequelize
+ * - Supporta SQLite (default) e PostgreSQL
+ * - Logging delle query con tempo di esecuzione
+ * - Configurazione pool di connessioni
+ * - Test di connessione all'avvio
+ */
+
+const { Sequelize } = require('sequelize');
+const logger = require('./logger');
+const { dbQueryLogger } = require('../middleware/performance');
+
+// Determina il database da usare
+const isSQLite = process.env.DB_DIALECT === 'sqlite' || !process.env.DB_DIALECT;
+
+let sequelize;
+
+if (isSQLite) {
+  // Configurazione SQLite
+  const dbPath = process.env.DB_STORAGE || './data/musica_eventi_e_documenti_web.db';
+
+  sequelize = new Sequelize({
+    dialect: 'sqlite',
+    storage: dbPath,
+    logging: (msg, options) => {
+      // Usa il logger di performance per le query
+      dbQueryLogger(msg, options);
+      // Log di debug per tutte le query (in sviluppo)
+      if (process.env.NODE_ENV !== 'production') {
+        logger.debug(`SQL: ${msg}`);
+      }
+    },
+    // Configurazione del pool (solo per SQLite è meno rilevante)
+    pool: {
+      max: 5,
+      min: 0,
+      acquire: 30000,
+      idle: 10000
+    },
+    // Timeout per le query
+    query: {
+      timeout: 5000 // 5 secondi
+    }
+  });
+} else {
+  // Configurazione PostgreSQL
+  sequelize = new Sequelize(
+    process.env.DB_NAME,
+    process.env.DB_USER,
+    process.env.DB_PASSWORD,
+    {
+      host: process.env.DB_HOST || 'localhost',
+      port: process.env.DB_PORT || 5432,
+      dialect: 'postgres',
+      logging: (msg, options) => {
+        dbQueryLogger(msg, options);
+        if (process.env.NODE_ENV !== 'production') {
+          logger.debug(`SQL: ${msg}`);
+        }
+      },
+      pool: {
+        max: parseInt(process.env.DB_POOL_MAX) || 5,
+        min: parseInt(process.env.DB_POOL_MIN) || 0,
+        acquire: parseInt(process.env.DB_POOL_ACQUIRE) || 30000,
+        idle: parseInt(process.env.DB_POOL_IDLE) || 10000
+      },
+      query: {
+        timeout: parseInt(process.env.DB_QUERY_TIMEOUT) || 5000
+      }
+    }
+  );
+}
+
+// Test della connessione
+const testConnection = async () => {
+  try {
+    await sequelize.authenticate();
+    logger.info('✅ Database connection established successfully.');
+    return true;
+  } catch (error) {
+    logger.error('❌ Unable to connect to the database:', {
+      error: error.message,
+      stack: error.stack
+    });
+    return false;
+  }
+};
+
+module.exports = {
+  sequelize,
+  testConnection,
+  isSQLite
+};
+
+================================================================================
+FILE: .\backend\src\config\logger.js
+SIZE: 1.89 KB
+================================================================================
+/**
+ * ðŸ“ PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\config\logger.js
+ *
+ * ðŸ“ DESCRIZIONE: Configurazione del sistema di logging Winston
+ * - Log su file in formato JSON per analisi
+ * - Log su console colorata in sviluppo
+ * - Rotazione automatica dei file (10MB)
+ * - Separazione errori in file dedicato
+ */
+
+const winston = require('winston');
+const path = require('path');
+const { combine, timestamp, printf, colorize, json, errors } = winston.format;
+
+// Formato per console (leggibile)
+const consoleFormat = printf(({ level, message, timestamp, correlationId, duration, ...meta }) => {
+  let log = `${timestamp} [${level}]`;
+  if (correlationId) log += ` [${correlationId.substring(0, 8)}]`;
+  log += ` ${message}`;
+  if (duration) log += ` (${duration}ms)`;
+  if (Object.keys(meta).length > 0) {
+    log += ` | ${JSON.stringify(meta)}`;
+  }
+  return log;
+});
+
+// Formato per file JSON (analisi)
+const jsonFormat = combine(
+  timestamp(),
+  errors({ stack: true }),
+  json()
+);
+
+// Logger principale
+const logger = winston.createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  format: jsonFormat,
+  transports: [
+    // Log generale
+    new winston.transports.File({
+      filename: path.join(__dirname, '../../logs/app.log'),
+      maxsize: 10485760, // 10MB
+      maxFiles: 5,
+      format: jsonFormat
+    }),
+    // Log degli errori separati
+    new winston.transports.File({
+      filename: path.join(__dirname, '../../logs/error.log'),
+      level: 'error',
+      maxsize: 10485760,
+      maxFiles: 5,
+      format: jsonFormat
+    })
+  ]
+});
+
+// In sviluppo, aggiungi console colorata
+if (process.env.NODE_ENV !== 'production') {
+  logger.add(new winston.transports.Console({
+    format: combine(
+      colorize(),
+      timestamp({ format: 'HH:mm:ss' }),
+      consoleFormat
+    ),
+    level: 'debug'
+  }));
+}
+
+module.exports = logger;
+
+================================================================================
+FILE: .\backend\src\controllers\documentController.js
+SIZE: 6.76 KB
+================================================================================
+/**
+ * ðŸ“ PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\controllers\documentController.js
+ *
+ * ðŸ“ DESCRIZIONE: Controller per la gestione dei documenti
+ * - CRUD completo per documenti
+ * - Recupero documenti tramite relazione SongDocument (many-to-many)
+ * - Streaming del contenuto dei file
+ * - Upload con multer
+ */
+
+// âœ… Importiamo tutti i modelli necessari (incluso Song e SongDocument per la relazione)
+const { Song, Document, SongDocument } = require('../models');
+const logger = require('../config/logger');
+const path = require('path');
+const fs = require('fs');
+
+/**
+ * Ottieni tutti i documenti di una canzone (tramite la tabella ponte SongDocument)
+ */
+exports.getDocumentsBySong = async (req, res, next) => {
+  try {
+    const { songId } = req.params;
+
+    logger.debug('Getting documents for song', {
+      correlationId: req.correlationId,
+      songId
+    });
+
+    // âœ… Verifica che la canzone esista
+    const song = await Song.findByPk(songId);
+    if (!song) {
+      const err = new Error(`Song ${songId} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    // âœ… Usa la relazione belongsToMany (Song â†” Document tramite SongDocument)
+    const songWithDocs = await Song.findByPk(songId, {
+      include: [
+        {
+          model: Document,
+          as: 'documents',
+          through: {
+            model: SongDocument,
+            attributes: ['order_index', 'notes']
+          },
+          required: false
+        }
+      ]
+    });
+
+    const documents = songWithDocs?.documents || [];
+
+    logger.info(`Found ${documents.length} documents for song ${songId}`, {
+      correlationId: req.correlationId,
+      songId,
+      count: documents.length
+    });
+
+    res.json(documents);
+  } catch (error) {
+    logger.error('Error loading song documents', {
+      correlationId: req.correlationId,
+      error: error.message,
+      stack: error.stack
+    });
+    next(error);
+  }
+};
+
+/**
+ * Ottieni un documento specifico
+ */
+exports.getDocument = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const document = await Document.findByPk(id);
+
+    if (!document) {
+      const err = new Error(`Document ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    logger.debug('Document retrieved', {
+      correlationId: req.correlationId,
+      documentId: id,
+      type: document.doc_type
+    });
+
+    res.json(document);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Visualizza un documento (metadati + URL del contenuto)
+ */
+exports.viewDocument = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const document = await Document.findByPk(id);
+
+    if (!document) {
+      const err = new Error(`Document ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    logger.info('Document viewed', {
+      correlationId: req.correlationId,
+      documentId: id,
+      type: document.doc_type,
+      filename: document.file_name
+    });
+
+    res.json({
+      id: document.id,
+      type: document.doc_type,
+      filename: document.file_name,
+      title: document.description || document.file_name,
+      contentUrl: `/api/documents/${id}/content`,
+      size: document.file_size || null,
+      mimeType: document.mime_type || null,
+      uploadedAt: document.created_at
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Ottieni il contenuto grezzo di un documento (streaming)
+ */
+exports.getDocumentContent = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const document = await Document.findByPk(id);
+
+    if (!document) {
+      const err = new Error(`Document ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    const filePath = path.join(__dirname, '../../uploads', document.file_name);
+
+    if (!fs.existsSync(filePath)) {
+      const err = new Error(`File ${document.file_name} not found on disk`);
+      err.status = 404;
+      return next(err);
+    }
+
+    logger.debug('Serving document content', {
+      correlationId: req.correlationId,
+      documentId: id,
+      filename: document.file_name
+    });
+
+    // Content-Type dal DB (mime_type) o dedotto dal doc_type
+    let contentType = document.mime_type || 'application/octet-stream';
+    if (!document.mime_type) {
+      if (document.doc_type === 'abc') contentType = 'text/vnd.abc';
+      else if (document.doc_type === 'pdf') contentType = 'application/pdf';
+      else if (document.doc_type === 'mxl') contentType = 'application/vnd.recordare.musicxml';
+      else if (document.doc_type === 'mp3') contentType = 'audio/mpeg';
+      else if (document.doc_type === 'mid') contentType = 'audio/midi';
+      else if (document.doc_type === 'kar') contentType = 'audio/midi';
+      else if (document.doc_type === 'txt') contentType = 'text/plain';
+      else if (document.doc_type === 'json') contentType = 'application/json';
+    }
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `inline; filename="${document.file_name}"`);
+
+    const fileStream = fs.createReadStream(filePath);
+    fileStream.pipe(res);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Crea un nuovo documento (upload)
+ */
+exports.uploadDocument = async (req, res, next) => {
+  try {
+    const { songId } = req.params;
+    const { title, type } = req.body;
+    const file = req.file;
+
+    if (!file) {
+      const err = new Error('No file uploaded');
+      err.status = 400;
+      return next(err);
+    }
+
+    const document = await Document.create({
+      songId,
+      filename: file.filename,
+      originalName: file.originalname,
+      type: type || path.extname(file.originalname).substring(1),
+      title: title || file.originalname,
+      size: file.size,
+      path: file.path
+    });
+
+    logger.info('Document uploaded', {
+      correlationId: req.correlationId,
+      documentId: document.id,
+      songId,
+      filename: file.filename
+    });
+
+    res.status(201).json(document);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Elimina un documento
+ */
+exports.deleteDocument = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const document = await Document.findByPk(id);
+
+    if (!document) {
+      const err = new Error(`Document ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    const filePath = path.join(__dirname, '../../uploads', document.file_name);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      logger.debug('File deleted from disk', {
+        correlationId: req.correlationId,
+        documentId: id,
+        filename: document.file_name
+      });
+    }
+
+    await document.destroy();
+
+    logger.info('Document deleted', {
+      correlationId: req.correlationId,
+      documentId: id,
+      filename: document.file_name
+    });
+
+    res.json({ message: 'Document deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+================================================================================
+FILE: .\backend\src\controllers\eventController.js
+SIZE: 4.64 KB
+================================================================================
+/**
+ * 📁 PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\controllers\eventController.js
+ */
+
+const { Event, Song, Document } = require('../models');
+const { sequelize } = require('../config/database');
+const { QueryTypes, Op } = require('sequelize');  // <-- AGGIUNGI Op!
+const logger = require('../config/logger');
+
+// ============================================
+// FUNZIONI DEL CONTROLLER
+// ============================================
+
+/**
+ * Ottieni tutti gli eventi con filtri
+ */
+exports.getEvents = async (req, res, next) => {
+  try {
+    const { category, difficulty, search } = req.query;
+
+    const where = {};
+    if (category) where.category = category;
+    if (difficulty) where.difficulty = difficulty;
+    if (search) {
+      where[Op.or] = [
+        { title: { [Op.like]: `%${search}%` } },
+        { description: { [Op.like]: `%${search}%` } }
+      ];
+    }
+
+    const events = await Event.findAll({
+      where,
+      include: [
+        {
+          model: Song,
+          as: 'songs',
+          include: [
+            {
+              model: Document,
+              as: 'documents'
+            }
+          ]
+        }
+      ]
+    });
+
+    logger.info(`📊 Eventi trovati: ${events.length}`, {
+      correlationId: req.correlationId,
+      count: events.length,
+      filters: { category, difficulty, search }
+    });
+
+    res.json(events);
+  } catch (error) {
+    logger.error('Errore nel caricamento eventi', {
+      correlationId: req.correlationId,
+      error: error.message,
+      stack: error.stack
+    });
+    next(error);
+  }
+};
+
+/**
+ * Ottieni un singolo evento con dettagli
+ */
+exports.getEventById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const event = await Event.findByPk(id, {
+      include: [
+        {
+          model: Song,
+          as: 'songs',
+          include: [
+            {
+              model: Document,
+              as: 'documents'
+            }
+          ]
+        }
+      ]
+    });
+
+    if (!event) {
+      const err = new Error(`Event ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    logger.debug(`Evento trovato: ${event.title}`, {
+      correlationId: req.correlationId,
+      eventId: id
+    });
+
+    res.json(event);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Crea un nuovo evento
+ */
+exports.createEvent = async (req, res, next) => {
+  try {
+    const { id, title, description, category, difficulty, date, location, image_url } = req.body;
+
+    const event = await Event.create({
+      id,
+      title,
+      description,
+      category,
+      difficulty,
+      date,
+      location,
+      image_url
+    });
+
+    logger.info(`Evento creato: ${title}`, {
+      correlationId: req.correlationId,
+      eventId: id
+    });
+
+    res.status(201).json(event);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Aggiorna un evento
+ */
+exports.updateEvent = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { title, description, category, difficulty, date, location, image_url } = req.body;
+
+    const event = await Event.findByPk(id);
+    if (!event) {
+      const err = new Error(`Event ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    await event.update({
+      title,
+      description,
+      category,
+      difficulty,
+      date,
+      location,
+      image_url
+    });
+
+    logger.info(`Evento aggiornato: ${event.title}`, {
+      correlationId: req.correlationId,
+      eventId: id
+    });
+
+    res.json(event);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Elimina un evento
+ */
+exports.deleteEvent = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const event = await Event.findByPk(id);
+    if (!event) {
+      const err = new Error(`Event ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    await event.destroy();
+
+    logger.info(`Evento eliminato: ${event.title}`, {
+      correlationId: req.correlationId,
+      eventId: id
+    });
+
+    res.json({ message: 'Event deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Ottieni statistiche degli eventi
+ */
+exports.getEventStats = async (req, res, next) => {
+  try {
+    const stats = await sequelize.query(
+      `SELECT
+        category,
+        COUNT(*) as count,
+        AVG(difficulty) as avg_difficulty
+      FROM Events
+      GROUP BY category`,
+      { type: QueryTypes.SELECT }
+    );
+
+    res.json(stats);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ============================================
+// VERIFICA ESPORTAZIONI (solo in sviluppo)
+// ============================================
+if (process.env.NODE_ENV !== 'production') {
+  console.log('✅ eventController esporta:', Object.keys(exports));
+}
+
+================================================================================
+FILE: .\backend\src\controllers\songController.js
+SIZE: 7.61 KB
+================================================================================
+/**
+ * ðŸ“ PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\controllers\songController.js
+ *
+ * ðŸ“ DESCRIZIONE: Controller per la gestione delle canzoni
+ */
+
+const { Song, Event, Document, EventSong, SongDocument } = require('../models');
+const { Op } = require('sequelize');
+const logger = require('../config/logger');
+
+// ============================================
+// FUNZIONI DEL CONTROLLER
+// ============================================
+
+/**
+ * Ottieni tutte le canzoni di un evento (con documenti)
+ */
+exports.getSongsByEvent = async (req, res, next) => {
+  try {
+    const { eventId } = req.params;
+
+    const songs = await Song.findAll({
+      include: [
+        {
+          model: Event,
+          as: 'events',
+          through: { model: EventSong, attributes: ['order_index', 'notes'] },
+          where: { id: eventId },
+          required: true
+        },
+        {
+          model: Document,
+          as: 'documents',
+          through: { model: SongDocument, attributes: ['order_index', 'notes'] },
+          required: false
+        }
+      ],
+      order: [[{ model: Event, as: 'events' }, EventSong, 'order_index', 'ASC']]
+    });
+
+    logger.info(`ðŸŽµ Brani trovati: ${songs.length}`, {
+      correlationId: req.correlationId,
+      eventId,
+      count: songs.length
+    });
+
+    res.json(songs);
+  } catch (error) {
+    logger.error('Errore nel caricamento brani', {
+      correlationId: req.correlationId,
+      error: error.message,
+      stack: error.stack
+    });
+    next(error);
+  }
+};
+
+/**
+ * Ottieni una canzone specifica con i suoi documenti
+ */
+exports.getSongById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const song = await Song.findByPk(id, {
+      include: [
+        {
+          model: Event,
+          as: 'events',
+          through: { attributes: ['order_index', 'notes'] }
+        },
+        {
+          model: Document,
+          as: 'documents',
+          through: { model: SongDocument, attributes: ['order_index', 'notes'] }
+        }
+      ]
+    });
+
+    if (!song) {
+      const err = new Error(`Song ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    logger.debug(`Brano trovato: ${song.title}`, {
+      correlationId: req.correlationId,
+      songId: id
+    });
+
+    res.json(song);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Ottieni i documenti di una canzone
+ */
+exports.getSongDocuments = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const song = await Song.findByPk(id, {
+      include: [
+        {
+          model: Document,
+          as: 'documents',
+          through: { model: SongDocument, attributes: ['order_index', 'notes'] }
+        }
+      ]
+    });
+
+    if (!song) {
+      const err = new Error(`Song ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    res.json(song.documents || []);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Crea una nuova canzone e la collega a un evento
+ */
+exports.createSong = async (req, res, next) => {
+  try {
+    const { id, eventId, title, composer, difficulty, genre, duration_seconds, tempo, key_signature, time_signature, lyrics } = req.body;
+
+    // Verifica che l'evento esista
+    const event = await Event.findByPk(eventId);
+    if (!event) {
+      const err = new Error(`Event ${eventId} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    // Crea la canzone
+    const song = await Song.create({
+      id,
+      title,
+      composer,
+      created_by: req.user?.id || 'system',
+      created_at: new Date().toISOString(),
+      difficulty,
+      genre,
+      duration_seconds,
+      tempo,
+      key_signature,
+      time_signature,
+      lyrics
+    });
+
+    // Collega la canzone all'evento
+    await EventSong.create({
+      id: `es_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      event_id: eventId,
+      song_id: id,
+      order_index: 0,
+      created_at: new Date().toISOString()
+    });
+
+    logger.info(`Brano creato: ${title}`, {
+      correlationId: req.correlationId,
+      songId: id,
+      eventId
+    });
+
+    res.status(201).json(song);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Aggiorna una canzone
+ */
+exports.updateSong = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { title, composer, difficulty, genre, duration_seconds, tempo, key_signature, time_signature, lyrics } = req.body;
+
+    const song = await Song.findByPk(id);
+    if (!song) {
+      const err = new Error(`Song ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    await song.update({
+      title,
+      composer,
+      difficulty,
+      genre,
+      duration_seconds,
+      tempo,
+      key_signature,
+      time_signature,
+      lyrics,
+      updated_at: new Date().toISOString()
+    });
+
+    logger.info(`Brano aggiornato: ${song.title}`, {
+      correlationId: req.correlationId,
+      songId: id
+    });
+
+    res.json(song);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Elimina una canzone (e i suoi documenti per cascata)
+ */
+exports.deleteSong = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const song = await Song.findByPk(id);
+    if (!song) {
+      const err = new Error(`Song ${id} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    // Elimina le relazioni
+    await EventSong.destroy({ where: { song_id: id } });
+    await SongDocument.destroy({ where: { song_id: id } });
+
+    // Elimina la canzone
+    await song.destroy();
+
+    logger.info(`Brano eliminato: ${song.title}`, {
+      correlationId: req.correlationId,
+      songId: id
+    });
+
+    res.json({ message: 'Song deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Collega un documento a una canzone
+ */
+exports.linkDocument = async (req, res, next) => {
+  try {
+    const { songId, documentId } = req.params;
+    const { order_index, notes } = req.body;
+
+    const song = await Song.findByPk(songId);
+    if (!song) {
+      const err = new Error(`Song ${songId} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    const document = await Document.findByPk(documentId);
+    if (!document) {
+      const err = new Error(`Document ${documentId} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    const link = await SongDocument.create({
+      id: `sd_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      song_id: songId,
+      document_id: documentId,
+      order_index: order_index || 0,
+      notes: notes || null,
+      created_at: new Date().toISOString()
+    });
+
+    logger.info(`Documento collegato alla canzone`, {
+      correlationId: req.correlationId,
+      songId,
+      documentId
+    });
+
+    res.status(201).json(link);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Rimuovi un documento da una canzone
+ */
+exports.unlinkDocument = async (req, res, next) => {
+  try {
+    const { songId, documentId } = req.params;
+
+    const link = await SongDocument.findOne({
+      where: { song_id: songId, document_id: documentId }
+    });
+
+    if (!link) {
+      const err = new Error(`Link between Song ${songId} and Document ${documentId} not found`);
+      err.status = 404;
+      return next(err);
+    }
+
+    await link.destroy();
+
+    logger.info(`Documento rimosso dalla canzone`, {
+      correlationId: req.correlationId,
+      songId,
+      documentId
+    });
+
+    res.json({ message: 'Document unlinked from song successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// ============================================
+// VERIFICA ESPORTAZIONI (solo in sviluppo)
+// ============================================
+if (process.env.NODE_ENV !== 'production') {
+  console.log('âœ… songController esporta:', Object.keys(exports));
+}
+
+================================================================================
+FILE: .\backend\src\index.js
+SIZE: 5.91 KB
+================================================================================
+/**
+ * ðŸ“ PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\index.js
+ *
+ * ðŸ“ DESCRIZIONE: Punto di ingresso principale del server
+ * - Configurazione Express con tutti i middleware
+ * - Gestione CORS, Helmet, Compressione
+ * - Middleware personalizzati (correlationId, performance, errorHandler)
+ * - Connessione al database
+ * - Routes API
+ * - Gestione errori e shutdown graceful
+ */
+
+// ============================================
+// IMPORTAZIONI
+// ============================================
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
+const path = require('path');
+
+// Logger
+const logger = require('./config/logger');
+
+// Middleware personalizzati
+const correlationIdMiddleware = require('./middleware/correlationId');
+const { performanceMiddleware } = require('./middleware/performance');
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
+
+// Database
+const { sequelize, testConnection } = require('./config/database');
+
+// Routes
+const songsRoutes = require('./routes/songs');
+const eventsRoutes = require('./routes/events');
+const documentsRoutes = require('./routes/documents');
+
+// ============================================
+// INIZIALIZZAZIONE APP
+// ============================================
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// ============================================
+// MIDDLEWARE GLOBALI
+// ============================================
+
+// Security
+app.use(helmet({
+  contentSecurityPolicy: false // Disabilita per test
+}));
+
+// CORS
+app.use(cors({
+  origin: process.env.CORS_ORIGIN || '*',
+  credentials: true,
+  exposedHeaders: ['X-Correlation-Id', 'X-Response-Time']
+}));
+
+// Compressione
+app.use(compression());
+
+// Body parsing
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Static files
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// ============================================
+// MIDDLEWARE PERSONALIZZATI
+// ============================================
+
+// 1. Correlation ID + Performance
+app.use(correlationIdMiddleware);
+app.use(performanceMiddleware);
+
+// 2. Logging delle richieste (solo in sviluppo)
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    logger.debug(`âž¡ï¸  ${req.method} ${req.url}`, {
+      correlationId: req.correlationId,
+      method: req.method,
+      url: req.url,
+      query: req.query,
+      ip: req.ip || req.connection.remoteAddress
+    });
+    next();
+  });
+}
+
+// 3. Request timeout
+app.use((req, res, next) => {
+  req.setTimeout(30000, () => {
+    const err = new Error('Request timeout');
+    err.status = 408;
+    next(err);
+  });
+  next();
+});
+
+// ============================================
+// ROTTE
+// ============================================
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    correlationId: req.correlationId
+  });
+});
+
+// API Routes
+app.use('/api/songs', songsRoutes);
+app.use('/api/events', eventsRoutes);
+app.use('/api/documents', documentsRoutes);
+
+// ============================================
+// GESTIONE ERRORI
+// ============================================
+
+// 404 - Route not found
+app.use(notFoundHandler);
+
+// Error handler globale
+app.use(errorHandler);
+
+// ============================================
+// AVVIO SERVER
+// ============================================
+
+async function startServer() {
+  try {
+    // Test connessione database
+    const dbConnected = await testConnection();
+    if (!dbConnected) {
+      logger.error('âŒ Database connection failed. Exiting...');
+      process.exit(1);
+    }
+
+    // Sincronizza i modelli (solo in sviluppo)
+    if (process.env.NODE_ENV !== 'production') {
+     // SYNC DISABILITATO - uso database esistente
+     console.log('â„¹ï¸  Database sync disabilitato - uso struttura esistente');
+     // await sequelize.sync({ alter: true });
+      logger.info('ðŸ“¦ Database models synced');
+    }
+
+    // Avvia il server
+    app.listen(PORT, () => {
+      logger.info(`ðŸš€ Server running on http://localhost:${PORT}`);
+      logger.info(`ðŸ“Š Environment: ${process.env.NODE_ENV || 'development'}`);
+      logger.info(`ðŸ”— Health check: http://localhost:${PORT}/api/health`);
+      logger.info(`ðŸ“ Logs directory: ${path.join(__dirname, '../logs')}`);
+
+      // Mostra i modelli caricati
+      const models = Object.keys(sequelize.models);
+      if (models.length > 0) {
+        logger.info(`ðŸ“š Models loaded: ${models.join(', ')}`);
+      }
+    });
+
+  } catch (error) {
+    logger.error('âŒ Failed to start server:', {
+      error: error.message,
+      stack: error.stack
+    });
+    process.exit(1);
+  }
+}
+
+// ============================================
+// SHUTDOWN GRACEFUL
+// ============================================
+
+process.on('SIGTERM', () => {
+  logger.info('ðŸ›‘ SIGTERM received. Shutting down gracefully...');
+  sequelize.close().then(() => {
+    logger.info('âœ… Database connection closed.');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('ðŸ›‘ SIGINT received. Shutting down gracefully...');
+  sequelize.close().then(() => {
+    logger.info('âœ… Database connection closed.');
+    process.exit(0);
+  });
+});
+
+// ============================================
+// GESTIONE ERRORI NON CATTURATI
+// ============================================
+
+process.on('uncaughtException', (error) => {
+  logger.error('ðŸ’¥ Uncaught Exception:', {
+    error: error.message,
+    stack: error.stack
+  });
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('ðŸ’¥ Unhandled Rejection:', {
+    reason: reason?.message || reason,
+    promise: promise
+  });
+});
+
+// ============================================
+// AVVIO
+// ============================================
+startServer();
+
+================================================================================
+FILE: .\backend\src\middleware\correlationId.js
+SIZE: 1.83 KB
+================================================================================
+/**
+ * ðŸ“ PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\middleware\correlationId.js
+ *
+ * ðŸ“ DESCRIZIONE: Middleware per tracciare le richieste con un ID univoco
+ * - Genera o propaga correlation ID dagli header
+ * - Misura il tempo di risposta di ogni richiesta
+ * - Logga richieste lente (> 1 secondo)
+ * - Aggiunge X-Correlation-Id all'header di risposta
+ */
+
+const { v4: uuidv4 } = require('uuid');
+const logger = require('../config/logger');
+
+/**
+ * Middleware che genera e propaga un correlation ID per tracciare
+ * una richiesta attraverso tutto il sistema.
+ */
+const correlationIdMiddleware = (req, res, next) => {
+  // Prendi l'ID dall'header o generane uno nuovo
+  const correlationId = req.headers['x-correlation-id'] || uuidv4();
+
+  // Salva nell'oggetto request per usarlo nei controller
+  req.correlationId = correlationId;
+
+  // Aggiungi all'header di risposta per il frontend
+  res.setHeader('X-Correlation-Id', correlationId);
+
+  // Salva il metodo original send per loggare il tempo di risposta
+  const start = Date.now();
+  const originalSend = res.send;
+
+  res.send = function(data) {
+    const duration = Date.now() - start;
+    res.duration = duration;
+
+    // Log della risposta
+    logger.debug('Request completed', {
+      correlationId,
+      method: req.method,
+      url: req.url,
+      statusCode: res.statusCode,
+      duration,
+      userAgent: req.get('user-agent'),
+      ip: req.ip || req.connection.remoteAddress
+    });
+
+    // Avviso per richieste lente
+    if (duration > 1000) {
+      logger.warn('Slow request detected', {
+        correlationId,
+        method: req.method,
+        url: req.url,
+        duration,
+        threshold: 1000
+      });
+    }
+
+    return originalSend.call(this, data);
+  };
+
+  next();
+};
+
+module.exports = correlationIdMiddleware;
+
+================================================================================
+FILE: .\backend\src\middleware\errorHandler.js
+SIZE: 1.53 KB
+================================================================================
+/**
+ * ðŸ“ PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\middleware\errorHandler.js
+ *
+ * ðŸ“ DESCRIZIONE: Middleware per la gestione centralizzata degli errori
+ * - Logga tutti gli errori con dettagli contestuali
+ * - Restituisce risposte JSON strutturate
+ * - Gestisce errori 404 (route non trovata)
+ * - In sviluppo include lo stack trace
+ */
+
+const logger = require('../config/logger');
+
+/**
+ * Middleware globale per la gestione degli errori
+ */
+const errorHandler = (err, req, res, next) => {
+  // Log dell'errore con dettagli
+  logger.error('Unhandled error', {
+    correlationId: req.correlationId,
+    error: err.message,
+    stack: err.stack,
+    method: req.method,
+    url: req.url,
+    body: req.body,
+    query: req.query,
+    params: req.params,
+    ip: req.ip || req.connection.remoteAddress
+  });
+
+  // Determina lo status code
+  const statusCode = err.status || err.statusCode || 500;
+
+  // Risposta al client (senza stack in produzione)
+  const response = {
+    error: err.message || 'Internal Server Error',
+    correlationId: req.correlationId
+  };
+
+  // In sviluppo, aggiungi lo stack
+  if (process.env.NODE_ENV !== 'production') {
+    response.stack = err.stack;
+  }
+
+  res.status(statusCode).json(response);
+};
+
+/**
+ * Middleware per errori 404 (route non trovata)
+ */
+const notFoundHandler = (req, res, next) => {
+  const err = new Error(`Route not found: ${req.method} ${req.url}`);
+  err.status = 404;
+  next(err);
+};
+
+module.exports = {
+  errorHandler,
+  notFoundHandler
+};
+
+================================================================================
+FILE: .\backend\src\middleware\performance.js
+SIZE: 1.52 KB
+================================================================================
+/**
+ * ðŸ“ PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\middleware\performance.js
+ *
+ * ðŸ“ DESCRIZIONE: Middleware per il monitoraggio delle performance
+ * - Traccia i tempi di esecuzione delle operazioni
+ * - Logger per query database lente
+ * - Fornisce metodo req.measure() per misurare operazioni asincrone
+ */
+
+const logger = require('../config/logger');
+
+/**
+ * Middleware che monitora le performance delle query e delle operazioni
+ */
+const performanceMiddleware = (req, res, next) => {
+  // Memorizza il tempo di inizio per operazioni asincrone
+  req._startTime = Date.now();
+
+  // Aggiunge un metodo per misurare il tempo delle operazioni
+  req.measure = (label, startTime) => {
+    const duration = Date.now() - (startTime || req._startTime);
+    logger.debug(`â±ï¸  ${label}: ${duration}ms`, {
+      correlationId: req.correlationId,
+      label,
+      duration
+    });
+    return duration;
+  };
+
+  next();
+};
+
+/**
+ * Middleware per logging delle query database (da usare con Sequelize)
+ */
+const dbQueryLogger = (query, options) => {
+  // Viene chiamato da Sequelize per ogni query
+  const duration = options?.duration || 0;
+
+  if (duration > 100) {
+    logger.warn('ðŸ¢ Slow database query', {
+      query: query.substring(0, 200),
+      duration,
+      threshold: 100
+    });
+  } else if (duration > 50) {
+    logger.debug('Database query', {
+      query: query.substring(0, 100),
+      duration
+    });
+  }
+};
+
+module.exports = {
+  performanceMiddleware,
+  dbQueryLogger
+};
+
+================================================================================
+FILE: .\backend\src\models\Document.js
+SIZE: 1.47 KB
+================================================================================
+const { DataTypes } = require('sequelize');
+
+module.exports = (sequelize) => {
+  const Document = sequelize.define('Document', {
+    id: {
+      type: DataTypes.TEXT,
+      primaryKey: true,
+      allowNull: false
+    },
+    doc_type: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    file_name: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    file_path: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    file_size: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    },
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    is_public: {
+      type: DataTypes.BOOLEAN,
+      allowNull: true,
+      defaultValue: true
+    },
+    uploaded_by: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    created_at: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    updated_at: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    storage_mode: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      defaultValue: 'filesystem'
+    },
+    content: {
+      type: DataTypes.BLOB,
+      allowNull: true
+    },
+    mime_type: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    }
+  }, {
+    tableName: 'documents',
+    timestamps: false,
+    underscored: true
+  });
+
+  Document.associate = (models) => {
+    Document.belongsToMany(models.Song, {
+      through: models.SongDocument,
+      foreignKey: 'document_id',
+      otherKey: 'song_id',
+      as: 'songs'
+    });
+  };
+
+  return Document;
+};
+
+================================================================================
+FILE: .\backend\src\models\Event.js
+SIZE: 1.94 KB
+================================================================================
+const { DataTypes } = require('sequelize');
+
+module.exports = (sequelize) => {
+  const Event = sequelize.define('Event', {
+    id: {
+      type: DataTypes.TEXT,
+      primaryKey: true,
+      allowNull: false
+    },
+    title: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    theme: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    description: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    image_url: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    date: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    location: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    category: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      defaultValue: 'concerto'
+    },
+    status: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      defaultValue: 'published'
+    },
+    capacity: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 999
+    },
+    registration_deadline: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    difficulty: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      defaultValue: 'intermediate'
+    },
+    duration: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    contact_email: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    contact_phone: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    video_url: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    created_by: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    created_at: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    updated_at: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    }
+  }, {
+    tableName: 'events',
+    timestamps: false,
+    underscored: true
+  });
+
+  Event.associate = (models) => {
+    Event.belongsToMany(models.Song, {
+      through: models.EventSong,
+      foreignKey: 'event_id',
+      otherKey: 'song_id',
+      as: 'songs'
+    });
+  };
+
+  return Event;
+};
+
+================================================================================
+FILE: .\backend\src\models\EventSong.js
+SIZE: 0.97 KB
+================================================================================
+const { DataTypes } = require('sequelize');
+
+module.exports = (sequelize) => {
+  const EventSong = sequelize.define('EventSong', {
+    id: {
+      type: DataTypes.TEXT,
+      primaryKey: true,
+      allowNull: false
+    },
+    event_id: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      references: {
+        model: 'events',
+        key: 'id'
+      }
+    },
+    song_id: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      references: {
+        model: 'songs',
+        key: 'id'
+      }
+    },
+    order_index: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 0
+    },
+    notes: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    created_at: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    updated_at: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    }
+  }, {
+    tableName: 'event_songs',
+    timestamps: false,
+    underscored: true
+  });
+
+  return EventSong;
+};
+
+================================================================================
+FILE: .\backend\src\models\index.js
+SIZE: 0.6 KB
+================================================================================
+const { sequelize } = require('../config/database');
+
+const Event = require('./Event');
+const Song = require('./Song');
+const Document = require('./Document');
+const EventSong = require('./EventSong');
+const SongDocument = require('./SongDocument');
+
+const models = {
+  Event: Event(sequelize),
+  Song: Song(sequelize),
+  Document: Document(sequelize),
+  EventSong: EventSong(sequelize),
+  SongDocument: SongDocument(sequelize)
+};
+
+// Imposta le associazioni
+Object.values(models).forEach(model => {
+  if (model.associate) {
+    model.associate(models);
+  }
+});
+
+module.exports = {
+  ...models,
+  sequelize
+};
+
+================================================================================
+FILE: .\backend\src\models\Song.js
+SIZE: 1.54 KB
+================================================================================
+const { DataTypes } = require('sequelize');
+
+module.exports = (sequelize) => {
+  const Song = sequelize.define('Song', {
+    id: {
+      type: DataTypes.TEXT,
+      primaryKey: true,
+      allowNull: false
+    },
+    title: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    composer: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    created_by: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    created_at: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    updated_at: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    difficulty: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    genre: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    duration_seconds: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    },
+    tempo: {
+      type: DataTypes.INTEGER,
+      allowNull: true
+    },
+    key_signature: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    time_signature: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    lyrics: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    }
+  }, {
+    tableName: 'songs',
+    timestamps: false,
+    underscored: true
+  });
+
+  Song.associate = (models) => {
+    Song.belongsToMany(models.Event, {
+      through: models.EventSong,
+      foreignKey: 'song_id',
+      otherKey: 'event_id',
+      as: 'events'
+    });
+    Song.belongsToMany(models.Document, {
+      through: models.SongDocument,
+      foreignKey: 'song_id',
+      otherKey: 'document_id',
+      as: 'documents'
+    });
+  };
+
+  return Song;
+};
+
+================================================================================
+FILE: .\backend\src\models\SongDocument.js
+SIZE: 0.99 KB
+================================================================================
+const { DataTypes } = require('sequelize');
+
+module.exports = (sequelize) => {
+  const SongDocument = sequelize.define('SongDocument', {
+    id: {
+      type: DataTypes.TEXT,
+      primaryKey: true,
+      allowNull: false
+    },
+    song_id: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      references: {
+        model: 'songs',
+        key: 'id'
+      }
+    },
+    document_id: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      references: {
+        model: 'documents',
+        key: 'id'
+      }
+    },
+    order_index: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 0
+    },
+    notes: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    created_at: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    updated_at: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    }
+  }, {
+    tableName: 'song_documents',
+    timestamps: false,
+    underscored: true
+  });
+
+  return SongDocument;
+};
+
+================================================================================
+FILE: .\backend\src\routes\documents.js
+SIZE: 1.01 KB
+================================================================================
+const express = require('express');
+const router = express.Router();
+const multer = require('multer');
+const path = require('path');
+const documentController = require('../controllers/documentController');
+
+// Configurazione multer
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(__dirname, '../../uploads'));
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '_' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + '_' + file.originalname);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024 }
+});
+
+router.get('/song/:songId', documentController.getDocumentsBySong);
+router.get('/:id', documentController.getDocument);
+router.get('/:id/view', documentController.viewDocument);
+router.get('/:id/content', documentController.getDocumentContent);
+router.post('/song/:songId', upload.single('file'), documentController.uploadDocument);
+router.delete('/:id', documentController.deleteDocument);
+
+module.exports = router;
+
+================================================================================
+FILE: .\backend\src\routes\events.js
+SIZE: 2.19 KB
+================================================================================
+/**
+ * 📁 PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\routes\events.js
+ *
+ * 📝 DESCRIZIONE: Route per la gestione degli eventi
+ * Include anche le sotto-risorse: songs (brani) e documents (documenti).
+ */
+
+const express = require('express');
+const router = express.Router();
+
+const eventController = require('../controllers/eventController');
+const songController = require('../controllers/songController');
+const documentController = require('../controllers/documentController');
+
+// VERIFICA: I controller sono stati importati correttamente?
+console.log('eventController:', Object.keys(eventController));
+console.log('songController:', Object.keys(songController));
+console.log('documentController:', Object.keys(documentController));
+
+// ============================================
+// ROTTE NIDIFICATE (vanno PRIMA di /:id)
+// ============================================
+
+/**
+ * GET /api/events/:eventId/songs
+ * Brani (con documenti) associati a un evento.
+ * Usa songController.getSongsByEvent, che legge req.params.eventId.
+ */
+router.get('/:eventId/songs', songController.getSongsByEvent);
+
+/**
+ * GET /api/events/:eventId/songs/:songId/documents
+ * Documenti associati a un brano all'interno di un evento.
+ * Riusa documentController.getDocumentsBySong (che legge req.params.songId).
+ */
+router.get('/:eventId/songs/:songId/documents', (req, res, next) => {
+  // getDocumentsBySong si aspetta req.params.songId → già presente nell'URL.
+  return documentController.getDocumentsBySong(req, res, next);
+});
+
+// ============================================
+// ROTTE EVENTO
+// ============================================
+
+// GET /api/events - Lista tutti gli eventi
+router.get('/', eventController.getEvents);
+
+// GET /api/events/:id - Dettaglio evento
+router.get('/:id', eventController.getEventById);
+
+// GET /api/events/:id/stats - Statistiche evento
+router.get('/:id/stats', eventController.getEventStats);
+
+// POST /api/events - Crea nuovo evento
+router.post('/', eventController.createEvent);
+
+// PUT /api/events/:id - Aggiorna evento
+router.put('/:id', eventController.updateEvent);
+
+// DELETE /api/events/:id - Elimina evento
+router.delete('/:id', eventController.deleteEvent);
+
+module.exports = router;
+
+================================================================================
+FILE: .\backend\src\routes\songs.js
+SIZE: 1.13 KB
+================================================================================
+/**
+ * 📁 PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\routes\songs.js
+ *
+ * 📝 DESCRIZIONE: Route per la gestione delle canzoni
+ */
+
+const express = require('express');
+const router = express.Router();
+const songController = require('../controllers/songController');
+
+// VERIFICA: I controller sono stati importati correttamente?
+console.log('📦 songController importato:', Object.keys(songController));
+
+// ============================================
+// ROTTE
+// ============================================
+
+// GET /api/songs/event/:eventId - Canzoni di un evento
+router.get('/event/:eventId', songController.getSongsByEvent);
+
+// GET /api/songs/:id - Dettaglio canzone
+router.get('/:id', songController.getSongById);
+
+// GET /api/songs/:id/documents - Documenti di una canzone
+router.get('/:id/documents', songController.getSongDocuments);
+
+// POST /api/songs - Crea nuova canzone
+router.post('/', songController.createSong);
+
+// PUT /api/songs/:id - Aggiorna canzone
+router.put('/:id', songController.updateSong);
+
+// DELETE /api/songs/:id - Elimina canzone
+router.delete('/:id', songController.deleteSong);
+
+module.exports = router;
+
+================================================================================
+FILE: .\frontend\.oxlintrc.json
+SIZE: 0.23 KB
+================================================================================
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "oxc"],
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+  }
+}
+
+
+================================================================================
+FILE: .\frontend\package.json
+SIZE: 0.71 KB
+================================================================================
+{
+  "name": "frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/icons-material": "^9.3.1",
+    "@mui/material": "^9.3.1",
+    "@tanstack/react-query": "^5.101.4",
+    "axios": "^1.19.0",
+    "date-fns": "^4.4.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "oxlint": "^1.75.0",
+    "vite": "^8.2.0"
+  }
+}
+
+
+================================================================================
+FILE: .\frontend\src\App.jsx
+SIZE: 0.91 KB
+================================================================================
+// src/App.jsx
+import React from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { ThemeProvider, createTheme } from '@mui/material/styles';
+import CssBaseline from '@mui/material/CssBaseline';
+import EventList from './pages/EventList';
+import EventDetail from './pages/EventDetail';
+import EventSongsAssignment from './pages/EventSongsAssignment';
+
+const theme = createTheme({
+  palette: {
+    primary: {
+      main: '#1976d2',
+    },
+    secondary: {
+      main: '#dc004e',
+    },
+  },
+});
+
+function App() {
+  return (
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<EventList />} />
+          <Route path="/event/:id" element={<EventDetail />} />
+          <Route path="/event/:id/songs" element={<EventSongsAssignment />} />
+        </Routes>
+      </BrowserRouter>
+    </ThemeProvider>
+  );
+}
+
+export default App;
+
+================================================================================
+FILE: .\frontend\src\main.jsx
+SIZE: 0.22 KB
+================================================================================
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+
+================================================================================
+FILE: .\frontend\src\pages\EventDetail.jsx
+SIZE: 11.25 KB
+================================================================================
+import React, { useState, useEffect } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import {
+  Container,
+  Typography,
+  Box,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  Alert,
+  Button,
+  Grid,
+  Divider,
+  Paper,
+  Stack
+} from '@mui/material';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
+import { eventService, documentService } from '../services/api';
+import { format } from 'date-fns';
+import { it } from 'date-fns/locale';
+
+// Etichette leggibili per i doc_type che compaiono nei pulsanti documento
+const DOC_TYPE_LABELS = {
+  mxl: 'Spartito (MXL)',
+  abc: 'Spartito (ABC)',
+  pdf: 'PDF',
+  audio_mp3: 'Audio (MP3)',
+  audio_wav: 'Audio (WAV)',
+  mid: 'MIDI',
+  kar: 'Karaoke (MIDI)'
+};
+
+// mxl/abc si aprono nel visualizzatore incorporato (spartito-viewer.html),
+// con spartito, esecuzione e trasposizione. Tutti gli altri tipi (pdf,
+// audio, midi) si aprono comunque nel browser (endpoint /raw, nessun
+// Content-Disposition forzato) invece di scaricarsi automaticamente: Ã¨ il
+// browser stesso a decidere come mostrarli (PDF nel suo viewer integrato,
+// audio con i controlli di riproduzione, ecc.).
+const VIEWABLE_TYPES = ['mxl', 'abc'];
+
+function SongDocuments({ songId, eventId }) {
+  const [documents, setDocuments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const response = await eventService.getSongDocuments(eventId, songId);
+        if (!cancelled) setDocuments(response.data?.data || []);
+      } catch (err) {
+        console.error('Errore caricamento documenti brano:', err);
+        if (!cancelled) setError('Impossibile caricare i documenti per questo brano');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [songId, eventId]);
+
+  if (loading) {
+    return <CircularProgress size={20} sx={{ mt: 1 }} />;
+  }
+  if (error) {
+    return <Typography variant="body2" color="error">{error}</Typography>;
+  }
+  if (documents.length === 0) {
+    return (
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+        Nessun documento disponibile per questo brano
+      </Typography>
+    );
+  }
+
+  return (
+    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
+      {documents.map((doc) => {
+        const isViewable = VIEWABLE_TYPES.includes(doc.doc_type);
+        return (
+          <Button
+            key={doc.id}
+            size="small"
+            variant="outlined"
+            color={isViewable ? 'secondary' : 'primary'}
+            startIcon={isViewable ? <MusicNoteIcon /> : <OpenInNewIcon />}
+            component="a"
+            href={isViewable ? documentService.viewUrl(doc.id) : documentService.rawUrl(doc.id)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {DOC_TYPE_LABELS[doc.doc_type] || doc.doc_type}
+          </Button>
+        );
+      })}
+    </Stack>
+  );
+}
+
+const EventDetail = () => {
+  const { id } = useParams();
+  const [event, setEvent] = useState(null);
+  const [songs, setSongs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    loadEventDetails();
+  }, [id]);
+
+  const loadEventDetails = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      console.log('ðŸ” Caricamento dettaglio evento:', id);
+
+      // Carica i dettagli dell'evento
+      const eventResponse = await eventService.getById(id);
+      console.log('ðŸ“¦ Evento ricevuto:', eventResponse.data);
+      setEvent(eventResponse.data.data);
+
+      // Carica i brani associati
+      try {
+        const songsResponse = await eventService.getSongs(id);
+        console.log('ðŸ“¦ Brani ricevuti:', songsResponse.data);
+        setSongs(songsResponse.data.data || []);
+      } catch (songErr) {
+        console.log('â„¹ï¸ Nessun brano associato a questo evento');
+        setSongs([]);
+      }
+
+    } catch (err) {
+      console.error('âŒ Errore dettaglio evento:', err);
+      setError('Errore durante il caricamento dei dettagli dell\'evento');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <Container sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+        <CircularProgress />
+      </Container>
+    );
+  }
+
+  if (error) {
+    return (
+      <Container sx={{ mt: 4 }}>
+        <Alert severity="error">{error}</Alert>
+        <Button
+          component={Link}
+          to="/"
+          startIcon={<ArrowBackIcon />}
+          sx={{ mt: 2 }}
+        >
+          Torna agli eventi
+        </Button>
+      </Container>
+    );
+  }
+
+  if (!event) {
+    return (
+      <Container sx={{ mt: 4 }}>
+        <Alert severity="warning">Evento non trovato</Alert>
+        <Button
+          component={Link}
+          to="/"
+          startIcon={<ArrowBackIcon />}
+          sx={{ mt: 2 }}
+        >
+          Torna agli eventi
+        </Button>
+      </Container>
+    );
+  }
+
+  return (
+    <Container maxWidth="lg" sx={{ py: 4 }}>
+      {/* Pulsante indietro */}
+      <Button
+        component={Link}
+        to="/"
+        startIcon={<ArrowBackIcon />}
+        sx={{ mb: 3 }}
+      >
+        Torna agli eventi
+      </Button>
+
+      {/* Dettagli Evento */}
+      <Card sx={{ mb: 4 }}>
+        <CardContent>
+          <Typography variant="h4" gutterBottom>
+            {event.title}
+          </Typography>
+
+          {event.theme && (
+            <Typography variant="subtitle1" color="primary" gutterBottom>
+              {event.theme}
+            </Typography>
+          )}
+
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+            {event.category && (
+              <Chip label={`Categoria: ${event.category}`} color="primary" />
+            )}
+            {event.difficulty && (
+              <Chip label={`DifficoltÃ : ${event.difficulty}`} color="info" />
+            )}
+            {event.status && (
+              <Chip
+                label={event.status === 'published' ? 'Pubblicato' : 'Bozza'}
+                color={event.status === 'published' ? 'success' : 'warning'}
+              />
+            )}
+          </Box>
+
+          <Grid container spacing={2} sx={{ mb: 2 }}>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body2" color="text.secondary">
+                ðŸ“… Data: {event.date ? format(new Date(event.date), "d MMMM yyyy 'alle' HH:mm", { locale: it }) : 'Non specificata'}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Typography variant="body2" color="text.secondary">
+                ðŸ“ Luogo: {event.location || 'Non specificato'}
+              </Typography>
+            </Grid>
+            {event.duration && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="body2" color="text.secondary">
+                  â±ï¸ Durata: {event.duration}
+                </Typography>
+              </Grid>
+            )}
+            {event.capacity && event.capacity !== 999 && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="body2" color="text.secondary">
+                  ðŸ‘¥ CapacitÃ : {event.capacity} persone
+                </Typography>
+              </Grid>
+            )}
+          </Grid>
+
+          {event.description && (
+            <>
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                {event.description}
+              </Typography>
+            </>
+          )}
+
+          {event.video_url && (
+            <Box sx={{ mt: 2 }}>
+              <Button
+                variant="outlined"
+                href={event.video_url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                â–¶ï¸ Guarda il video
+              </Button>
+            </Box>
+          )}
+
+          {(event.contact_email || event.contact_phone) && (
+            <>
+              <Divider sx={{ my: 2 }} />
+              <Typography variant="subtitle2" gutterBottom>
+                Contatti:
+              </Typography>
+              {event.contact_email && (
+                <Typography variant="body2">
+                  ðŸ“§ {event.contact_email}
+                </Typography>
+              )}
+              {event.contact_phone && (
+                <Typography variant="body2">
+                  ðŸ“ž {event.contact_phone}
+                </Typography>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Brani dell'evento */}
+      <Typography variant="h5" gutterBottom sx={{ mt: 4 }}>
+        ðŸŽµ Brani in programma
+      </Typography>
+
+      {songs.length === 0 ? (
+        <Paper sx={{ p: 3, textAlign: 'center' }}>
+          <Typography variant="body1" color="text.secondary">
+            Nessun brano associato a questo evento
+          </Typography>
+        </Paper>
+      ) : (
+        <Grid container spacing={2}>
+          {songs.map((song, index) => (
+            <Grid item xs={12} md={6} key={song.id || index}>
+              <Card>
+                <CardContent>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <Typography variant="h6" color="primary">
+                      #{index + 1}
+                    </Typography>
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="subtitle1">
+                        {song.title || 'Senza titolo'}
+                      </Typography>
+                      {song.composer && (
+                        <Typography variant="body2" color="text.secondary">
+                          Compositore: {song.composer}
+                        </Typography>
+                      )}
+                      <Box sx={{ display: 'flex', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+                        {song.genre && (
+                          <Chip label={song.genre} size="small" variant="outlined" />
+                        )}
+                        {song.difficulty && (
+                          <Chip
+                            label={song.difficulty}
+                            size="small"
+                            color="info"
+                            variant="outlined"
+                          />
+                        )}
+                        {song.duration_seconds && (
+                          <Chip
+                            label={`${Math.floor(song.duration_seconds / 60)}:${String(song.duration_seconds % 60).padStart(2, '0')}`}
+                            size="small"
+                            variant="outlined"
+                          />
+                        )}
+                      </Box>
+
+                      {/* Documenti per lo studio preventivo del brano:
+                          audio/PDF scaricano, mxl/abc aprono lo spartito
+                          interattivo (spartito-viewer.html) in una nuova scheda. */}
+                      <SongDocuments songId={song.id} eventId={id} />
+                    </Box>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
+      )}
+    </Container>
+  );
+};
+
+export default EventDetail;
+
+
+================================================================================
+FILE: .\frontend\src\pages\EventList.jsx
+SIZE: 9.84 KB
+================================================================================
+// src/pages/EventList.jsx
+import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  Container,
+  Grid,
+  Card,
+  CardContent,
+  CardMedia,
+  Typography,
+  Chip,
+  TextField,
+  MenuItem,
+  CircularProgress,
+  Alert,
+  Box,
+  Button,
+  Stack,
+  CardActionArea,
+  Avatar
+} from '@mui/material';
+import { eventService } from '../services/api';
+import { format } from 'date-fns';
+import { it } from 'date-fns/locale';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
+import LocationOnIcon from '@mui/icons-material/LocationOn';
+import PeopleIcon from '@mui/icons-material/People';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
+
+const EventList = () => {
+  const navigate = useNavigate();
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [filters, setFilters] = useState({
+    category: '',
+    difficulty: '',
+    search: ''
+  });
+
+  useEffect(() => {
+    loadEvents();
+  }, [filters]);
+
+  const loadEvents = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await eventService.getAll(filters);
+      const eventData = response.data?.data || response.data || [];
+      setEvents(eventData);
+    } catch (err) {
+      console.error('Errore:', err);
+      setError(`Errore: ${err.message || 'Errore durante il caricamento degli eventi'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleFilterChange = (field, value) => {
+    setFilters(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleEventClick = (eventId) => {
+    navigate(`/event/${eventId}`);
+  };
+
+  const handleResetFilters = () => {
+    setFilters({ category: '', difficulty: '', search: '' });
+  };
+
+  if (loading) {
+    return (
+      <Container sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+        <CircularProgress />
+      </Container>
+    );
+  }
+
+  if (error) {
+    return (
+      <Container sx={{ mt: 4 }}>
+        <Alert severity="error">{error}</Alert>
+      </Container>
+    );
+  }
+
+  return (
+    <Container maxWidth="lg" sx={{ py: 3 }}>
+      {/* Header */}
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="h5" gutterBottom>
+          ðŸŽµ Eventi Musicali
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {events.length} eventi trovati
+        </Typography>
+      </Box>
+
+      {/* Filtri */}
+      <Grid container spacing={1.5} sx={{ mb: 3 }}>
+        <Grid item xs={12} md={4}>
+          <TextField
+            fullWidth
+            label="Cerca"
+            variant="outlined"
+            size="small"
+            value={filters.search}
+            onChange={(e) => handleFilterChange('search', e.target.value)}
+            placeholder="Titolo, tema, descrizione..."
+          />
+        </Grid>
+        <Grid item xs={12} md={3}>
+          <TextField
+            fullWidth
+            select
+            label="Categoria"
+            variant="outlined"
+            size="small"
+            value={filters.category}
+            onChange={(e) => handleFilterChange('category', e.target.value)}
+          >
+            <MenuItem value="">Tutte</MenuItem>
+            <MenuItem value="concerto">Concerto</MenuItem>
+            <MenuItem value="workshop">Workshop</MenuItem>
+            <MenuItem value="masterclass">Masterclass</MenuItem>
+            <MenuItem value="audizione">Audizione</MenuItem>
+            <MenuItem value="laboratorio">Laboratorio</MenuItem>
+          </TextField>
+        </Grid>
+        <Grid item xs={12} md={3}>
+          <TextField
+            fullWidth
+            select
+            label="DifficoltÃ "
+            variant="outlined"
+            size="small"
+            value={filters.difficulty}
+            onChange={(e) => handleFilterChange('difficulty', e.target.value)}
+          >
+            <MenuItem value="">Tutte</MenuItem>
+            <MenuItem value="beginner">Principiante</MenuItem>
+            <MenuItem value="intermediate">Intermedio</MenuItem>
+            <MenuItem value="advanced">Avanzato</MenuItem>
+            <MenuItem value="expert">Esperto</MenuItem>
+          </TextField>
+        </Grid>
+        <Grid item xs={12} md={2}>
+          <Button
+            fullWidth
+            variant="outlined"
+            onClick={handleResetFilters}
+            sx={{ height: '100%' }}
+          >
+            Reset
+          </Button>
+        </Grid>
+      </Grid>
+
+      {/* Lista eventi - COMPATTA ORIZZONTALE */}
+      {events.length === 0 ? (
+        <Typography variant="body1" sx={{ textAlign: 'center', mt: 4 }}>
+          Nessun evento trovato
+        </Typography>
+      ) : (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {events.map((event) => {
+            // Il backend (mapEvent) espone sempre "date" e "image_url".
+            // I nomi "event_date"/"event_image" restano supportati per
+            // compatibilitÃ  con eventuali risposte dirette dalla vista SQL,
+            // ma senza questo fallback data e immagine risultavano sempre
+            // vuote perchÃ© l'API non restituisce mai quei nomi lunghi.
+            const eventDate = event.event_date || event.date;
+            const eventImage = event.event_image || event.image_url;
+
+            return (
+            <Card
+              key={event.event_id || event.id}
+              sx={{
+                width: '100%',
+                borderRadius: 2,
+                '&:hover': {
+                  boxShadow: 4,
+                }
+              }}
+            >
+              <CardActionArea
+                onClick={() => handleEventClick(event.event_id || event.id)}
+                sx={{ display: 'flex', alignItems: 'center' }}
+              >
+                {/* Immagine a sinistra */}
+                {eventImage ? (
+                  <CardMedia
+                    component="img"
+                    sx={{
+                      width: 100,
+                      height: 80,
+                      objectFit: 'cover',
+                      flexShrink: 0
+                    }}
+                    image={eventImage}
+                    alt={event.event_title || event.title}
+                  />
+                ) : (
+                  <Box
+                    sx={{
+                      width: 100,
+                      height: 80,
+                      bgcolor: 'primary.light',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}
+                  >
+                    <MusicNoteIcon sx={{ fontSize: 32, color: 'white' }} />
+                  </Box>
+                )}
+
+                {/* Contenuto a destra */}
+                <CardContent sx={{
+                  flex: 1,
+                  py: 1.5,
+                  px: 2,
+                  '&:last-child': { pb: 1.5 }
+                }}>
+                  <Stack spacing={0.5}>
+                    {/* Titolo e tema */}
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <Typography variant="subtitle2" fontWeight="bold" noWrap sx={{ flex: 1 }}>
+                        {event.event_title || event.title || 'Senza titolo'}
+                      </Typography>
+                      {event.theme && (
+                        <Chip
+                          label={event.theme}
+                          size="small"
+                          color="primary"
+                          sx={{ height: 18, fontSize: 10 }}
+                        />
+                      )}
+                    </Stack>
+
+                    {/* Data e luogo */}
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <CalendarMonthIcon sx={{ fontSize: 14 }} color="action" />
+                      <Typography variant="caption" color="text.secondary">
+                        {eventDate ? format(new Date(eventDate), 'd MMM yyyy', { locale: it }) : 'N/D'}
+                      </Typography>
+                      <LocationOnIcon sx={{ fontSize: 14, ml: 1 }} color="action" />
+                      <Typography variant="caption" color="text.secondary" noWrap>
+                        {event.event_location || event.location || 'N/D'}
+                      </Typography>
+                    </Stack>
+
+                    {/* Badge categoria/difficoltÃ  */}
+                    {(event.category || event.event_difficulty) && (
+                      <Stack direction="row" spacing={0.5}>
+                        {event.category && (
+                          <Chip
+                            label={event.category}
+                            size="small"
+                            variant="outlined"
+                            sx={{ height: 16, fontSize: 10 }}
+                          />
+                        )}
+                        {event.event_difficulty && (
+                          <Chip
+                            label={event.event_difficulty}
+                            size="small"
+                            variant="outlined"
+                            color="info"
+                            sx={{ height: 16, fontSize: 10 }}
+                          />
+                        )}
+                      </Stack>
+                    )}
+                  </Stack>
+                </CardContent>
+
+                {/* Freccia a destra */}
+                <ChevronRightIcon sx={{ mr: 1, color: 'text.disabled' }} />
+              </CardActionArea>
+            </Card>
+            );
+          })}
+        </Box>
+      )}
+    </Container>
+  );
+};
+
+export default EventList;
+
+
+================================================================================
+FILE: .\frontend\src\pages\EventSongsAssignment.jsx
+SIZE: 13.85 KB
+================================================================================
+// src/pages/EventSongsAssignment.jsx
+import React, { useState, useEffect } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import {
+  Container,
+  Typography,
+  Box,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress,
+  Alert,
+  Button,
+  Grid,
+  Divider,
+  Paper,
+  Stack,
+  Avatar,
+  IconButton,
+  TextField,
+  MenuItem,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  List,
+  ListItem,
+  ListItemAvatar,
+  ListItemText,
+  ListItemButton,
+  InputAdornment,
+  Snackbar
+} from '@mui/material';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
+import MusicNoteIcon from '@mui/icons-material/MusicNote';
+import DescriptionIcon from '@mui/icons-material/Description';
+import PeopleIcon from '@mui/icons-material/People';
+import SearchIcon from '@mui/icons-material/Search';
+import EditIcon from '@mui/icons-material/Edit';
+import { eventService, songService } from '../services/api';
+import { format } from 'date-fns';
+import { it } from 'date-fns/locale';
+
+const EventSongsAssignment = () => {
+  const { id } = useParams();
+  const [event, setEvent] = useState(null);
+  const [assignedSongs, setAssignedSongs] = useState([]);
+  const [allSongs, setAllSongs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [openDialog, setOpenDialog] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [registrationsCount, setRegistrationsCount] = useState({});
+  const [documentsCount, setDocumentsCount] = useState({});
+
+  useEffect(() => {
+    loadData();
+  }, [id]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Carica evento
+      const eventResponse = await eventService.getById(id);
+      setEvent(eventResponse.data.data);
+
+      // Carica brani assegnati
+      const songsResponse = await eventService.getSongs(id);
+      setAssignedSongs(songsResponse.data.data || []);
+
+      // Carica tutti i brani
+      const allSongsResponse = await songService.getAll();
+      setAllSongs(allSongsResponse.data.data || []);
+
+      // Carica conteggi registrazioni e documenti
+      // (assumendo che il backend fornisca questi dati)
+      // TODO: implementare chiamate API per conteggi
+
+    } catch (err) {
+      console.error('Errore:', err);
+      setError('Errore durante il caricamento dei dati');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAddSong = async (song) => {
+    try {
+      // TODO: implementare chiamata API per aggiungere brano all'evento
+      console.log('Aggiungendo brano:', song.title);
+      setSnackbar({
+        open: true,
+        message: `âœ… "${song.title}" aggiunto all'evento`,
+        severity: 'success'
+      });
+      await loadData();
+      setOpenDialog(false);
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: 'âŒ Errore durante aggiunta brano',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleRemoveSong = async (song) => {
+    try {
+      // TODO: implementare chiamata API per rimuovere brano dall'evento
+      console.log('Rimuovendo brano:', song.title);
+      setSnackbar({
+        open: true,
+        message: `ðŸ—‘ï¸ "${song.title}" rimosso dall'evento`,
+        severity: 'info'
+      });
+      await loadData();
+    } catch (err) {
+      setSnackbar({
+        open: true,
+        message: 'âŒ Errore durante rimozione brano',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleOpenDocuments = (song) => {
+    // TODO: navigare alla pagina documenti del brano
+    console.log('Aprendo documenti per:', song.title);
+  };
+
+  const filteredSongs = allSongs.filter(song => {
+    if (searchQuery.isEmpty) return true;
+    return song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+           (song.composer?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
+  });
+
+  const availableSongs = filteredSongs.filter(
+    song => !assignedSongs.some(s => s.id === song.id)
+  );
+
+  if (loading) {
+    return (
+      <Container sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+        <CircularProgress />
+      </Container>
+    );
+  }
+
+  if (error) {
+    return (
+      <Container sx={{ mt: 4 }}>
+        <Alert severity="error">{error}</Alert>
+        <Button
+          component={Link}
+          to={`/event/${id}`}
+          startIcon={<ArrowBackIcon />}
+          sx={{ mt: 2 }}
+        >
+          Torna all'evento
+        </Button>
+      </Container>
+    );
+  }
+
+  if (!event) {
+    return (
+      <Container sx={{ mt: 4 }}>
+        <Alert severity="warning">Evento non trovato</Alert>
+        <Button
+          component={Link}
+          to="/"
+          startIcon={<ArrowBackIcon />}
+          sx={{ mt: 2 }}
+        >
+          Torna agli eventi
+        </Button>
+      </Container>
+    );
+  }
+
+  return (
+    <Container maxWidth="lg" sx={{ py: 3, bgcolor: '#f5f5f5', minHeight: '100vh' }}>
+      {/* Pulsante indietro */}
+      <Button
+        component={Link}
+        to={`/event/${id}`}
+        startIcon={<ArrowBackIcon />}
+        sx={{ mb: 3 }}
+      >
+        Torna all'evento
+      </Button>
+
+      {/* âœ… HEADER CON IMMAGINE EVENTO */}
+      {event.image_url && (
+        <Box
+          sx={{
+            height: 200,
+            backgroundImage: `url(${event.image_url})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            borderRadius: 2,
+            mb: 3,
+            position: 'relative',
+          }}
+        >
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'linear-gradient(to bottom, rgba(0,0,0,0.2), rgba(0,0,0,0.7))',
+              borderRadius: 2,
+              display: 'flex',
+              alignItems: 'flex-end',
+              padding: 3,
+            }}
+          >
+            <Box>
+              <Typography variant="h4" color="white" fontWeight="bold">
+                {event.title}
+              </Typography>
+              <Typography variant="body1" color="white" sx={{ opacity: 0.8 }}>
+                {event.theme}
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+      )}
+
+      {/* âœ… DATI GENERALI EVENTO */}
+      <Card sx={{ mb: 3, borderRadius: 2 }}>
+        <CardContent>
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={6}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <MusicNoteIcon color="primary" />
+                <Typography variant="body2">
+                  {event.date ? format(new Date(event.date), 'd MMMM yyyy', { locale: it }) : 'Data non specificata'}
+                </Typography>
+              </Stack>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Stack direction="row" spacing={1} alignItems="center">
+                <PeopleIcon color="primary" />
+                <Typography variant="body2">
+                  {assignedSongs.length} brani in scaletta
+                </Typography>
+              </Stack>
+            </Grid>
+          </Grid>
+        </CardContent>
+      </Card>
+
+      {/* âœ… LISTA BRANI ASSEGNATI */}
+      <Typography variant="h5" gutterBottom sx={{ mb: 2 }}>
+        ðŸŽµ Brani in scaletta ({assignedSongs.length})
+      </Typography>
+
+      {assignedSongs.length === 0 ? (
+        <Paper sx={{ p: 4, textAlign: 'center' }}>
+          <Icon sx={{ fontSize: 64, color: 'text.disabled' }}>
+            <MusicNoteIcon />
+          </Icon>
+          <Typography variant="body1" color="text.secondary" sx={{ mt: 2 }}>
+            Nessun brano assegnato a questo evento
+          </Typography>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => setOpenDialog(true)}
+            sx={{ mt: 2 }}
+          >
+            Aggiungi Brani
+          </Button>
+        </Paper>
+      ) : (
+        <Grid container spacing={2}>
+          {assignedSongs.map((song, index) => (
+            <Grid item xs={12} md={6} key={song.id}>
+              <Card sx={{ borderRadius: 2 }}>
+                <CardContent>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    {/* Avatar con numero */}
+                    <Avatar
+                      sx={{
+                        bgcolor: 'primary.main',
+                        width: 36,
+                        height: 36,
+                        fontSize: 16,
+                      }}
+                    >
+                      {index + 1}
+                    </Avatar>
+
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="subtitle1" fontWeight="bold" noWrap>
+                        {song.title || 'Senza titolo'}
+                      </Typography>
+
+                      {song.composer && (
+                        <Typography variant="caption" color="text.secondary">
+                          {song.composer}
+                        </Typography>
+                      )}
+
+                      {/* Badge compatti */}
+                      <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, flexWrap: 'wrap' }}>
+                        {song.genre && (
+                          <Chip
+                            label={song.genre}
+                            size="small"
+                            variant="outlined"
+                            sx={{ height: 20, fontSize: 11 }}
+                          />
+                        )}
+                        {song.difficulty && (
+                          <Chip
+                            label={song.difficulty}
+                            size="small"
+                            color="info"
+                            variant="outlined"
+                            sx={{ height: 20, fontSize: 11 }}
+                          />
+                        )}
+                      </Stack>
+                    </Box>
+
+                    {/* Pulsanti azioni */}
+                    <IconButton
+                      color="primary"
+                      onClick={() => handleOpenDocuments(song)}
+                      title="Documenti"
+                    >
+                      <DescriptionIcon />
+                    </IconButton>
+
+                    <IconButton
+                      color="error"
+                      onClick={() => handleRemoveSong(song)}
+                      title="Rimuovi"
+                    >
+                      <DeleteIcon />
+                    </IconButton>
+                  </Stack>
+                </CardContent>
+              </Card>
+            </Grid>
+          ))}
+        </Grid>
+      )}
+
+      {/* âœ… PULSANTE AGGIUNGI BRANO */}
+      <Box sx={{ mt: 3, textAlign: 'center' }}>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={() => setOpenDialog(true)}
+          sx={{ px: 4, py: 1.5 }}
+        >
+          Aggiungi Brani alla Scaletta
+        </Button>
+      </Box>
+
+      {/* âœ… DIALOG PER AGGIUNGERE BRANI */}
+      <Dialog
+        open={openDialog}
+        onClose={() => setOpenDialog(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <MusicNoteIcon color="primary" />
+            <Typography variant="h6">Aggiungi Brani</Typography>
+          </Stack>
+        </DialogTitle>
+        <DialogContent>
+          <TextField
+            fullWidth
+            variant="outlined"
+            placeholder="Cerca brani..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            sx={{ mb: 2, mt: 1 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
+          />
+
+          <List sx={{ maxHeight: 400, overflow: 'auto' }}>
+            {availableSongs.length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+                Nessun brano disponibile
+              </Typography>
+            ) : (
+              availableSongs.map((song) => (
+                <ListItemButton
+                  key={song.id}
+                  onClick={() => handleAddSong(song)}
+                >
+                  <ListItemAvatar>
+                    <Avatar sx={{ bgcolor: 'primary.light' }}>
+                      <MusicNoteIcon />
+                    </Avatar>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={song.title}
+                    secondary={song.composer || 'Nessun compositore'}
+                  />
+                  <AddIcon color="primary" />
+                </ListItemButton>
+              ))
+            )}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenDialog(false)}>Chiudi</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* âœ… SNACKBAR PER NOTIFICHE */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={3000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
+    </Container>
+  );
+};
+
+export default EventSongsAssignment;
+
+================================================================================
+FILE: .\frontend\src\services\api.js
+SIZE: 2.9 KB
+================================================================================
+import axios from 'axios';
+
+// USA L'URL DIRETTO DEL BACKEND (senza proxy)
+const API_URL = 'http://localhost:5000/api';
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  timeout: 15000,
+});
+
+// Interceptor per log delle richieste
+api.interceptors.request.use(
+  (config) => {
+    console.log('ðŸ“¤ Richiesta API:', config.method.toUpperCase(), config.url);
+    console.log('ðŸ“¤ URL completo:', config.baseURL + config.url);
+    return config;
+  },
+  (error) => {
+    console.error('âŒ Errore nella richiesta:', error);
+    return Promise.reject(error);
+  }
+);
+
+// Interceptor per log delle risposte
+api.interceptors.response.use(
+  (response) => {
+    console.log('ðŸ“¥ Risposta API:', response.status, response.config.url);
+    return response;
+  },
+  (error) => {
+    console.error('âŒ Errore nella risposta:', error.message);
+    if (error.code === 'ECONNREFUSED') {
+      console.error('âš ï¸ Il backend non Ã¨ in esecuzione su localhost:5000');
+    }
+    if (error.response) {
+      console.error('âš ï¸ Status:', error.response.status);
+      console.error('âš ï¸ Data:', error.response.data);
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Servizi
+export const eventService = {
+  getAll: (params) => api.get('/events', { params }),
+  getById: (id) => api.get(`/events/${id}`),
+  getSongs: (eventId) => api.get(`/events/${eventId}/songs`),
+  // Documenti del brano SPECIFICI per questo evento, con prioritÃ  sugli
+  // eventuali documenti globali del brano (vista v_event_documents,
+  // gestita da eventController.getSongDocuments).
+  getSongDocuments: (eventId, songId) =>
+    api.get(`/events/${eventId}/songs/${songId}/documents`),
+  addSong: (eventId, payload) => api.post(`/events/${eventId}/songs`, payload),
+  removeSong: (eventId, songId) => api.delete(`/events/${eventId}/songs/${songId}`),
+};
+
+export const songService = {
+  getAll: (params) => api.get('/songs', { params }),
+  getById: (id) => api.get(`/songs/${id}`),
+  // Solo i documenti GLOBALI del brano (song_documents), indipendenti da un
+  // evento specifico. Per i documenti di un'esecuzione in un dato evento,
+  // usare eventService.getSongDocuments.
+  getDocuments: (songId) => api.get(`/songs/${songId}/documents`),
+};
+
+export const documentService = {
+  getAll: (params) => api.get('/documents', { params }),
+  getById: (id) => api.get(`/documents/${id}`),
+  download: (id) => api.get(`/documents/${id}/download`, { responseType: 'blob' }),
+  // URL diretti (non richieste axios): usati come href/src per pulsanti e
+  // link, non serve leggerne la risposta in JS.
+  downloadUrl: (id) => `${API_URL}/documents/${id}/download`,  // forza il salvataggio (Content-Disposition: attachment)
+  rawUrl: (id) => `${API_URL}/documents/${id}/raw`,            // apertura inline nel browser (PDF, audio, ecc.)
+  viewUrl: (id) => `${API_URL}/documents/${id}/view`,          // spartito-viewer.html (mxl/abc)
+};
+
+export default api;
+
+
+================================================================================
+FILE: .\frontend\vite.config.js
+SIZE: 0.29 KB
+================================================================================
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false
+      }
+    }
+  }
+})
+
+================================================================================
+FILE: .\scripts\debug-song-documents.js
+SIZE: 2.85 KB
+================================================================================
+
+// Diagnostica: per un evento, mostra brano per brano cosa c'Ã¨ (o non c'Ã¨) in
+// song_documents / event_song_documents / documents, e cosa restituisce
+// davvero la vista v_event_documents. Aiuta a capire se manca il dato o se
+// c'Ã¨ un problema nella query.
+//
+// Uso:
+//   node debug-song-documents.js <event_id>
+
+const sqlite3 = require('sqlite3').verbose();
+const dotenv = require('dotenv');
+const path = require('path');
+
+dotenv.config({ path: path.resolve(__dirname, '../backend/.env') });
+
+const SOURCE_DB_PATH = process.env.SQLITE_DB_PATH;
+const eventId = process.argv[2];
+
+if (!eventId) {
+  console.error('Uso: node debug-song-documents.js <event_id>');
+  process.exit(1);
+}
+
+const db = new sqlite3.Database(SOURCE_DB_PATH, sqlite3.OPEN_READONLY);
+
+function all(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
+  });
+}
+
+(async () => {
+  try {
+    console.log(`ðŸ“‚ DB: ${SOURCE_DB_PATH}`);
+    console.log(`ðŸŽ¯ Evento: ${eventId}`);
+    console.log('');
+
+    const songs = await all(
+      `SELECT es.id AS event_song_id, s.id AS song_id, s.title
+       FROM event_songs es JOIN songs s ON es.song_id = s.id
+       WHERE es.event_id = ? ORDER BY es.order_index`,
+      [eventId]
+    );
+
+    for (const song of songs) {
+      console.log(`--- #${song.song_id} "${song.title}" (event_song_id=${song.event_song_id}) ---`);
+
+      const globalDocs = await all(
+        `SELECT sd.document_id, d.file_name, d.doc_type
+         FROM song_documents sd LEFT JOIN documents d ON sd.document_id = d.id
+         WHERE sd.song_id = ?`,
+        [song.song_id]
+      );
+      console.log(`  song_documents (globali): ${globalDocs.length}`,
+        globalDocs.map(d => `${d.file_name || '??'} [doc_id=${d.document_id}]`));
+
+      const specificDocs = await all(
+        `SELECT esd.document_id, d.file_name, d.doc_type
+         FROM event_song_documents esd LEFT JOIN documents d ON esd.document_id = d.id
+         WHERE esd.event_song_id = ?`,
+        [song.event_song_id]
+      );
+      console.log(`  event_song_documents (specifici): ${specificDocs.length}`,
+        specificDocs.map(d => `${d.file_name || '??'} [doc_id=${d.document_id}]`));
+
+      const viewRows = await all(
+        `SELECT document_id, document_name, document_source
+         FROM v_event_documents WHERE event_id = ? AND song_id = ?`,
+        [eventId, song.song_id]
+      );
+      console.log(`  v_event_documents restituisce: ${viewRows.length}`,
+        viewRows.map(d => `${d.document_name} (${d.document_source})`));
+      console.log('');
+    }
+
+    db.close();
+  } catch (err) {
+    console.error('âŒ Errore:', err.message);
+    process.exit(1);
+  }
+})();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+================================================================================
+FILE: .\scripts\fix-view-event-full.js
+SIZE: 2.86 KB
+================================================================================
+// Corregge la vista v_event_full sul DATABASE SORGENTE (quello dell'app
+// Flutter): mancava la colonna image_url, e 'location' non era rinominata
+// in 'event_location' come si aspetta eventController.js. Va applicato al
+// sorgente (non alla copia web) perchÃ© full-copy.js/sync-incremental.js
+// sovrascrivono le viste della copia ad ogni esecuzione, prendendole dal
+// sorgente â€” un fix applicato solo lÃ¬ andrebbe perso al giro successivo.
+//
+// Uso:
+//   node fix-view-event-full.js
+
+const sqlite3 = require('sqlite3').verbose();
+const dotenv = require('dotenv');
+const path = require('path');
+const fs = require('fs');
+
+const envPath = path.resolve(__dirname, '../backend/.env');
+const envResult = dotenv.config({ path: envPath });
+
+if (envResult.error) {
+  console.error(`âš ï¸  Impossibile caricare il file .env da: ${envPath}`);
+  console.error(`   Dettaglio: ${envResult.error.message}`);
+} else {
+  console.log(`âœ… File .env caricato da: ${envPath}`);
+}
+
+const SOURCE_DB_PATH = process.env.SQLITE_DB_PATH ||
+  'C:/Users/TUO_NOME_UTENTE/Documents/musica_eventi_e_documenti.db';
+
+console.log(`ðŸ“‚ Database sorgente: ${SOURCE_DB_PATH}`);
+
+if (!fs.existsSync(SOURCE_DB_PATH)) {
+  console.error(`âŒ ERRORE: File database sorgente non trovato in ${SOURCE_DB_PATH}`);
+  process.exit(1);
+}
+
+const NEW_VIEW_SQL = `
+CREATE VIEW v_event_full AS
+SELECT
+  e.id AS event_id,
+  e.title AS event_title,
+  e.theme,
+  e.description AS event_description,
+  e.image_url AS event_image,
+  e.date AS event_date,
+  e.location AS event_location,
+  e.category,
+  e.status,
+  e.difficulty AS event_difficulty,
+  u.full_name AS created_by_name,
+  COUNT(DISTINCT es.song_id) AS songs_count,
+  COUNT(DISTINCT r.id) AS registrations_count,
+  e.created_at,
+  e.updated_at
+FROM events e
+LEFT JOIN users u ON e.created_by = u.id
+LEFT JOIN event_songs es ON e.id = es.event_id
+LEFT JOIN registrations r ON e.id = r.event_id
+GROUP BY e.id
+ORDER BY e.date DESC
+`;
+
+const db = new sqlite3.Database(SOURCE_DB_PATH, (err) => {
+  if (err) {
+    console.error('âŒ Impossibile aprire il database sorgente:', err.message);
+    process.exit(1);
+  }
+});
+
+db.serialize(() => {
+  db.run('DROP VIEW IF EXISTS v_event_full', (err) => {
+    if (err) {
+      console.error('âŒ Errore durante la rimozione della vista precedente:', err.message);
+      db.close();
+      process.exit(1);
+    }
+    console.log('ðŸ—‘ï¸  Vecchia vista v_event_full rimossa');
+
+    db.run(NEW_VIEW_SQL, (err) => {
+      db.close();
+      if (err) {
+        console.error('âŒ Errore durante la creazione della nuova vista:', err.message);
+        process.exit(1);
+      }
+      console.log('âœ… Vista v_event_full ricreata con event_image ed event_location corretti');
+      console.log('');
+      console.log('â„¹ï¸  Ora rilancia full-copy.js (o sync-incremental.js) per');
+      console.log('    portare la correzione sulla copia web, poi riavvia il backend.');
+    });
+  });
+});
+
+
+================================================================================
+FILE: .\scripts\full-copy.js
+SIZE: 3.18 KB
+================================================================================
+// Copia completa e atomica del database sorgente (quello dell'app Flutter)
+// verso la copia usata dal web server â€” sostituisce sync-incremental.js.
+//
+// Usa VACUUM INTO invece di una semplice copia di file: Ã¨ un comando SQLite
+// che produce una copia consistente anche se il database sorgente Ã¨ aperto
+// in scrittura da un'altra applicazione nello stesso momento (l'app
+// Flutter), a differenza di un fs.copyFile che potrebbe catturare uno stato
+// a metÃ  scrittura.
+//
+// Uso:
+//   node full-copy.js
+
+const sqlite3 = require('sqlite3').verbose();
+const dotenv = require('dotenv');
+const fs = require('fs');
+const path = require('path');
+
+const envPath = path.resolve(__dirname, '../backend/.env');
+const envResult = dotenv.config({ path: envPath });
+
+if (envResult.error) {
+  console.error(`âš ï¸  Impossibile caricare il file .env da: ${envPath}`);
+  console.error(`   Dettaglio: ${envResult.error.message}`);
+} else {
+  console.log(`âœ… File .env caricato da: ${envPath}`);
+}
+
+const SOURCE_DB_PATH = process.env.SQLITE_DB_PATH ||
+  'C:/Users/TUO_NOME_UTENTE/Documents/musica_eventi_e_documenti.db';
+
+const TARGET_DB_PATH = path.resolve(__dirname, '../backend',
+  process.env.DB_STORAGE || './data/musica_eventi_e_documenti_web.db');
+
+console.log(`ðŸ“‚ Database sorgente: ${SOURCE_DB_PATH}`);
+console.log(`ðŸ“‚ Database copia: ${TARGET_DB_PATH}`);
+
+if (!fs.existsSync(SOURCE_DB_PATH)) {
+  console.error(`âŒ ERRORE: File database sorgente non trovato in ${SOURCE_DB_PATH}`);
+  if (SOURCE_DB_PATH.includes('TUO_NOME_UTENTE')) {
+    console.error('   Questo Ã¨ il percorso di DEFAULT (segnaposto): SQLITE_DB_PATH');
+    console.error('   non Ã¨ stato letto correttamente da backend/.env.');
+  }
+  process.exit(1);
+}
+
+const targetDir = path.dirname(TARGET_DB_PATH);
+if (!fs.existsSync(targetDir)) {
+  fs.mkdirSync(targetDir, { recursive: true });
+}
+
+// Un'eventuale copia precedente va rimossa prima: VACUUM INTO richiede che
+// il file di destinazione non esista giÃ .
+if (fs.existsSync(TARGET_DB_PATH)) {
+  const backupPath = TARGET_DB_PATH + '.bak';
+  fs.copyFileSync(TARGET_DB_PATH, backupPath);
+  fs.unlinkSync(TARGET_DB_PATH);
+  console.log(`â„¹ï¸  Copia precedente salvata come backup: ${backupPath}`);
+}
+
+const sourceDb = new sqlite3.Database(SOURCE_DB_PATH, sqlite3.OPEN_READONLY, (err) => {
+  if (err) {
+    console.error('âŒ Impossibile aprire il database sorgente:', err.message);
+    process.exit(1);
+  }
+});
+
+console.log('');
+console.log('ðŸš€ Copia in corso (VACUUM INTO)...');
+
+// path per VACUUM INTO va scritto con gli apici singoli SQL, non doppi
+// (le doppie sono riservate agli identificatori in SQLite â€” stesso errore
+// giÃ  incontrato altrove in questo progetto).
+const escapedTargetPath = TARGET_DB_PATH.replace(/'/g, "''");
+
+sourceDb.exec(`VACUUM INTO '${escapedTargetPath}'`, (err) => {
+  sourceDb.close();
+
+  if (err) {
+    console.error('âŒ Errore durante la copia:', err.message);
+    process.exit(1);
+  }
+
+  const stats = fs.statSync(TARGET_DB_PATH);
+  console.log(`âœ… COPIA COMPLETATA! (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+  console.log(`ðŸ“‚ Database copia: ${TARGET_DB_PATH}`);
+  console.log('');
+  console.log('â„¹ï¸  Riavvia il backend (npm run dev) per usare i dati aggiornati.');
+});
+
+
+================================================================================
+FILE: .\scripts\last_sync.json
+SIZE: 0.04 KB
+================================================================================
+{
+  "lastSync": "2026-08-25T02:18:56.871Z"
+}
+
+================================================================================
+FILE: .\scripts\package.json
+SIZE: 0.32 KB
+================================================================================
+{
+  "name": "scripts",
+  "version": "1.0.0",
+  "description": "",
+  "main": "sync-incremental.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "sqlite3": "^6.0.1"
+  }
+}
+
+
+================================================================================
+FILE: .\scripts\sync-incremental.js
+SIZE: 12.46 KB
+================================================================================
+const sqlite3 = require('sqlite3').verbose();
+const dotenv = require('dotenv');
+const fs = require('fs');
+const path = require('path');
+
+// Carica le variabili d'ambiente dal backend. Percorso ASSOLUTO rispetto a
+// questo file (non alla cartella da cui lanci il comando): con un percorso
+// relativo tipo '../backend/.env', se lo script viene eseguito da una
+// cartella diversa da scripts/ il file .env non viene trovato e si cade
+// silenziosamente sui valori di default â€” incluso il segnaposto
+// 'TUO_NOME_UTENTE' che non esiste su nessuna macchina reale.
+const envPath = path.resolve(__dirname, '../backend/.env');
+const envResult = dotenv.config({ path: envPath });
+
+if (envResult.error) {
+  console.error(`âš ï¸  Impossibile caricare il file .env da: ${envPath}`);
+  console.error(`   Dettaglio: ${envResult.error.message}`);
+  console.error(`   VerrÃ  usato il percorso di default (probabilmente sbagliato).`);
+} else {
+  console.log(`âœ… File .env caricato da: ${envPath}`);
+}
+
+// PERCORSO DEL DATABASE SORGENTE OPERATIVO (in Documenti)
+const SOURCE_DB_PATH = process.env.SQLITE_DB_PATH ||
+  'C:/Users/TUO_NOME_UTENTE/Documents/musica_eventi_e_documenti.db';
+
+// PERCORSO DEL DATABASE COPIA (per il web)
+const TARGET_DB_PATH = path.resolve(__dirname, '../backend',
+  process.env.DB_STORAGE || './data/musica_eventi_e_documenti_web.db');
+
+const LAST_SYNC_FILE = path.join(__dirname, 'last_sync.json');
+
+console.log(`ðŸ“‚ Database sorgente: ${SOURCE_DB_PATH}`);
+console.log(`ðŸ“‚ Database copia: ${TARGET_DB_PATH}`);
+
+// Verifica che il file sorgente esista
+if (!fs.existsSync(SOURCE_DB_PATH)) {
+  console.error(`âŒ ERRORE: File database sorgente non trovato in ${SOURCE_DB_PATH}`);
+  if (SOURCE_DB_PATH.includes('TUO_NOME_UTENTE')) {
+    console.error('   Questo Ã¨ il percorso di DEFAULT (segnaposto): significa che');
+    console.error('   SQLITE_DB_PATH non Ã¨ stato letto da backend/.env. Controlla');
+    console.error('   il messaggio "File .env caricato da: ..." qui sopra.');
+  } else {
+    console.log('   Verifica il percorso nel file .env (SQLITE_DB_PATH)');
+  }
+  process.exit(1);
+}
+
+// Verifica che la cartella di destinazione esista
+const targetDir = path.dirname(TARGET_DB_PATH);
+if (!fs.existsSync(targetDir)) {
+  fs.mkdirSync(targetDir, { recursive: true });
+}
+
+// Carica l'ultimo timestamp di sincronizzazione
+function getLastSyncTime() {
+  try {
+    if (fs.existsSync(LAST_SYNC_FILE)) {
+      const data = JSON.parse(fs.readFileSync(LAST_SYNC_FILE, 'utf8'));
+      return data.lastSync;
+    }
+  } catch (error) {
+    console.warn('âš ï¸ Impossibile leggere last_sync.json, uso data di default');
+  }
+  return '2024-01-01 00:00:00';
+}
+
+function saveLastSyncTime(timestamp) {
+  fs.writeFileSync(LAST_SYNC_FILE, JSON.stringify({ lastSync: timestamp }, null, 2));
+}
+
+// Allinea lo schema della tabella copia a quello del sorgente: aggiunge le
+// colonne mancanti (es. storage_mode/content/mime_type appena introdotte su
+// documents). Prima d'ora la sincronizzazione clonava lo schema SOLO se la
+// tabella non esisteva affatto nella copia, quindi una tabella giÃ  presente
+// da sync precedenti non riceveva mai le nuove colonne â€” e la INSERT
+// dinamica su quelle colonne avrebbe fallito con "no such column".
+async function reconcileSchema(sourceDb, targetDb, tableName) {
+  const sourceColumns = await new Promise((resolve, reject) => {
+    sourceDb.all(`PRAGMA table_info(${tableName})`, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+
+  const targetColumns = await new Promise((resolve, reject) => {
+    targetDb.all(`PRAGMA table_info(${tableName})`, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+
+  const targetColumnNames = new Set(targetColumns.map(c => c.name));
+  const missingColumns = sourceColumns.filter(c => !targetColumnNames.has(c.name));
+
+  for (const col of missingColumns) {
+    console.log(`   ðŸ”§ Aggiungo colonna mancante ${tableName}.${col.name} (${col.type})`);
+    await new Promise((resolve, reject) => {
+      targetDb.run(
+        `ALTER TABLE ${tableName} ADD COLUMN ${col.name} ${col.type}`,
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+  }
+}
+
+async function syncTables() {
+  const lastSync = getLastSyncTime();
+
+  console.log('');
+  console.log('ðŸš€ AVVIO SINCRONIZZAZIONE INCREMENTALE');
+  console.log(`ðŸ“… Ultima sincronizzazione: ${lastSync}`);
+  console.log('');
+
+  // Connessione al database sorgente
+  const sourceDb = new sqlite3.Database(SOURCE_DB_PATH);
+
+  // Connessione al database copia (crea il file se non esiste)
+  const targetDb = new sqlite3.Database(TARGET_DB_PATH);
+
+  try {
+    // Lista delle tabelle da sincronizzare
+    const tables = [
+      'users',
+      'songs',
+      'events',
+      'documents',
+      'event_songs',
+      'song_documents',
+      'event_song_documents',
+      'registrations',
+      'event_assignments',
+      'instrument_parts',
+      'musical_documents',
+      'song_infos'
+    ];
+
+    let totalRecords = 0;
+
+    const tableErrors = [];
+
+    for (const tableName of tables) {
+      console.log(`ðŸ”„ Sincronizzazione: ${tableName}`);
+
+      // Ogni tabella Ã¨ isolata: se una fallisce (es. una colonna con un tipo
+      // inatteso, un vincolo che non torna), le altre vengono comunque
+      // processate invece che interrompere l'intero script a metÃ  â€” prima
+      // un errore su una tabella qualsiasi bloccava silenziosamente anche
+      // tutte quelle successive nell'elenco.
+      try {
+        // Prima controlla se la tabella esiste nel database copia
+        const tableExists = await new Promise((resolve, reject) => {
+          targetDb.get(
+            `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+            [tableName],
+            (err, row) => {
+              if (err) return reject(err);
+              resolve(!!row);
+            }
+          );
+        });
+
+        if (!tableExists) {
+          // Crea la tabella se non esiste (copia lo schema dal sorgente)
+          console.log(`   ðŸ“‹ Creazione tabella ${tableName}...`);
+          await new Promise((resolve, reject) => {
+            sourceDb.get(
+              `SELECT sql FROM sqlite_master WHERE type='table' AND name=?`,
+              [tableName],
+              (err, row) => {
+                if (err) return reject(err);
+                if (row && row.sql) {
+                  targetDb.exec(row.sql, (err) => {
+                    if (err) return reject(err);
+                    resolve();
+                  });
+                } else {
+                  resolve();
+                }
+              }
+            );
+          });
+        } else {
+          // La tabella esiste giÃ : allinea lo schema aggiungendo le colonne
+          // eventualmente comparse nel sorgente da quando fu creata qui.
+          await reconcileSchema(sourceDb, targetDb, tableName);
+        }
+
+        // Se la copia Ã¨ vuota per questa tabella (appena creata, svuotata,
+        // o un sync precedente interrotto prima di arrivarci), il filtro
+        // incrementale lascerebbe fuori tutto lo storico: last_sync.json
+        // continua a riportare la data dell'ultima sincronizzazione
+        // riuscita, indipendentemente da quanti dati sono davvero rimasti
+        // sulla copia. In quel caso sincronizziamo tutti i record, non solo
+        // quelli piÃ¹ recenti di lastSync.
+        const targetRowCount = await new Promise((resolve, reject) => {
+          targetDb.get(`SELECT COUNT(*) AS c FROM ${tableName}`, (err, row) => {
+            if (err) return reject(err);
+            resolve(row ? row.c : 0);
+          });
+        });
+        const needsFullSync = targetRowCount === 0;
+        if (needsFullSync) {
+          console.log(`   â„¹ï¸  Copia vuota per questa tabella: sincronizzo tutto lo storico`);
+        }
+
+        // Leggi i dati dal sorgente: tutto lo storico se la copia Ã¨ vuota,
+        // altrimenti solo le modifiche piÃ¹ recenti dell'ultima sincronizzazione.
+        const sourceData = await new Promise((resolve, reject) => {
+          if (needsFullSync) {
+            sourceDb.all(`SELECT * FROM ${tableName}`, (err, rows) => {
+              if (err) return reject(err);
+              resolve(rows);
+            });
+          } else {
+            sourceDb.all(
+              `SELECT * FROM ${tableName}
+               WHERE updated_at > ? OR (updated_at IS NULL AND created_at > ?)`,
+              [lastSync, lastSync],
+              (err, rows) => {
+                if (err) return reject(err);
+                resolve(rows);
+              }
+            );
+          }
+        });
+
+        if (sourceData.length === 0) {
+          console.log(`   âœ… Nessuna modifica`);
+          continue;
+        }
+
+        console.log(`   ðŸ“ ${sourceData.length} record da sincronizzare`);
+
+        // Ottieni le colonne della tabella (ora sicuramente allineate)
+        const columns = await new Promise((resolve, reject) => {
+          sourceDb.all(`PRAGMA table_info(${tableName})`, (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows.map(r => r.name));
+          });
+        });
+
+        // Sincronizza i dati
+        for (const row of sourceData) {
+          const placeholders = columns.map(() => '?').join(', ');
+          const updateClause = columns
+            .filter(col => col !== 'id')
+            .map(col => `${col} = ?`)
+            .join(', ');
+
+          const values = columns.map(col => row[col]);
+          const updateValues = columns
+            .filter(col => col !== 'id')
+            .map(col => row[col]);
+
+          const query = `
+            INSERT INTO ${tableName} (${columns.join(', ')})
+            VALUES (${placeholders})
+            ON CONFLICT(id) DO UPDATE SET ${updateClause}
+          `;
+
+          await new Promise((resolve, reject) => {
+            targetDb.run(query, [...values, ...updateValues], (err) => {
+              if (err) return reject(err);
+              resolve();
+            });
+          });
+        }
+
+        totalRecords += sourceData.length;
+        console.log(`   âœ… Sincronizzati ${sourceData.length} record`);
+      } catch (tableError) {
+        console.error(`   âŒ Errore su ${tableName}: ${tableError.message}`);
+        tableErrors.push({ tableName, message: tableError.message });
+        console.log(`   â­ï¸  Proseguo con la tabella successiva...`);
+      }
+    }
+
+    // Sincronizza anche le VISTE (v_event_full, v_event_songs,
+    // v_event_documents, ecc.): finora venivano sincronizzate solo le
+    // tabelle, mai le viste â€” su una copia web creata/aggiornata da questo
+    // script le viste non sono mai esistite, causando "no such table:
+    // v_event_full" (SQLite tratta le viste mancanti con lo stesso errore
+    // delle tabelle mancanti). Le ricreiamo sempre (DROP + CREATE) per
+    // restare allineati a qualunque modifica alla loro definizione.
+    console.log('ðŸ”„ Sincronizzazione viste...');
+    const sourceViews = await new Promise((resolve, reject) => {
+      sourceDb.all(`SELECT name, sql FROM sqlite_master WHERE type='view'`, (err, rows) => {
+        if (err) return reject(err);
+        resolve(rows);
+      });
+    });
+
+    for (const view of sourceViews) {
+      try {
+        await new Promise((resolve, reject) => {
+          targetDb.run(`DROP VIEW IF EXISTS ${view.name}`, (err) => {
+            if (err) return reject(err);
+            resolve();
+          });
+        });
+        await new Promise((resolve, reject) => {
+          targetDb.exec(view.sql, (err) => {
+            if (err) return reject(err);
+            resolve();
+          });
+        });
+        console.log(`   âœ… Vista ${view.name} aggiornata`);
+      } catch (viewError) {
+        console.error(`   âŒ Errore su vista ${view.name}: ${viewError.message}`);
+        tableErrors.push({ tableName: `vista ${view.name}`, message: viewError.message });
+      }
+    }
+
+    // Salva il timestamp
+    const newTimestamp = new Date().toISOString();
+    saveLastSyncTime(newTimestamp);
+
+    console.log('');
+    console.log('âœ… SINCRONIZZAZIONE COMPLETATA!');
+    if (tableErrors.length > 0) {
+      console.log('');
+      console.log(`âš ï¸  ATTENZIONE: ${tableErrors.length} tabella/e con errori (vedi sopra):`);
+      tableErrors.forEach(e => console.log(`   - ${e.tableName}: ${e.message}`));
+    }
+    console.log(`ðŸ“Š Record aggiornati: ${totalRecords}`);
+    console.log(`ðŸ“… Nuovo timestamp: ${newTimestamp}`);
+    console.log('');
+    console.log(`ðŸ“‚ Database copia: ${TARGET_DB_PATH}`);
+
+  } catch (error) {
+    console.error('âŒ Errore durante la sincronizzazione:', error);
+  } finally {
+    sourceDb.close();
+    targetDb.close();
+  }
+}
+
+// Esegui
+syncTables();
+
+
+

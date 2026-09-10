@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spartito — visualizza, esegui, trasponi</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/abcjs/6.6.4/abcjs-basic-min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --paper:#F3ECD9;
+    --paper-line:#D9CBA0;
+    --ink:#23281F;
+    --ink-soft:#4B5142;
+    --brass:#9C6B30;
+    --brass-dark:#7A5223;
+    --pine:#4B6455;
+    --error:#A23B2E;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    line-height:1.5;
+  }
+  .wrap{max-width:900px;margin:0 auto;padding:28px 20px 60px;}
+
+  header{margin-bottom:22px;}
+  h1{
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    font-size:2.1rem;
+    letter-spacing:0.01em;
+    margin:0 0 4px;
+    color:var(--ink);
+  }
+  .subtitle{color:var(--ink-soft);font-size:0.98rem;margin:0 0 14px;}
+  .staff-rule{height:14px;position:relative;margin-bottom:22px;}
+  .staff-rule::before{
+    content:"";position:absolute;left:0;right:0;top:0;bottom:0;
+    background-image: repeating-linear-gradient(
+      to bottom,
+      var(--brass) 0px, var(--brass) 1px,
+      transparent 1px, transparent 3.4px
+    );
+    opacity:0.55;
+  }
+
+  .panel{
+    background:#FBF8EF;
+    border:1px solid var(--paper-line);
+    border-radius:4px;
+    padding:18px 20px;
+    margin-bottom:20px;
+  }
+  .panel h2{
+    font-family: Georgia, serif;
+    font-size:1.05rem;
+    margin:0 0 12px;
+    color:var(--brass-dark);
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+  }
+  label{display:block;font-size:0.88rem;color:var(--ink-soft);margin-bottom:6px;}
+  textarea{
+    width:100%;
+    min-height:140px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size:0.88rem;
+    padding:10px;
+    border:1px solid var(--paper-line);
+    border-radius:3px;
+    background:#fff;
+    color:var(--ink);
+    resize:vertical;
+  }
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-top:12px;}
+  .field{flex:1;min-width:220px;}
+  input[type=file]{
+    width:100%;font-size:0.86rem;
+    padding:7px;border:1px dashed var(--paper-line);border-radius:3px;background:#fff;
+  }
+  select{
+    padding:7px 10px;border:1px solid var(--paper-line);border-radius:3px;background:#fff;
+    font-size:0.9rem;color:var(--ink);
+  }
+  button{
+    background:var(--brass);
+    color:#fff;
+    border:none;
+    padding:10px 18px;
+    border-radius:3px;
+    font-size:0.92rem;
+    cursor:pointer;
+    letter-spacing:0.02em;
+  }
+  button:hover{background:var(--brass-dark);}
+  button:disabled{background:#B9AE94;cursor:not-allowed;}
+  button.secondary{background:transparent;color:var(--brass-dark);border:1px solid var(--brass);}
+  button.secondary:hover{background:rgba(156,107,48,0.08);}
+
+  .status{font-size:0.86rem;margin-top:10px;min-height:1.2em;}
+  .status.error{color:var(--error);}
+  .status.ok{color:var(--pine);}
+
+  #controls-bar{
+    display:flex;flex-wrap:wrap;align-items:center;gap:16px;
+    padding:12px 16px;background:#EFE7CF;border:1px solid var(--paper-line);border-radius:4px 4px 0 0;
+  }
+  #audio-controls{min-height:38px;}
+  /* abcjs mostra un avviso testuale se non trova il suo abcjs-audio.css ufficiale
+     (non distribuito su CDN pubbliche): lo sopprimiamo e stiliamo noi i controlli. */
+  .abcjs-css-warning{display:none!important;}
+  .abcjs-inline-audio{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .abcjs-inline-audio button{
+    background:#fff;border:1px solid var(--brass);color:var(--brass-dark);
+    border-radius:3px;padding:5px 9px;cursor:pointer;font-size:0.85rem;line-height:1;
+  }
+  .abcjs-inline-audio button:hover{background:rgba(156,107,48,0.1);}
+  .abcjs-inline-audio button.abcjs-pushed{background:var(--brass);color:#fff;}
+  .abcjs-midi-progress-background{background:#e6dcbd;border-radius:6px;height:8px;flex:1;min-width:120px;}
+  .abcjs-midi-progress-indicator{background:var(--brass);height:8px;border-radius:6px;}
+  .transpose-field{display:flex;align-items:center;gap:8px;font-size:0.86rem;color:var(--ink-soft);}
+
+  /* Cursore ed evidenziazione della nota in esecuzione */
+  #sheet-music .highlight{fill:var(--brass-dark)!important;}
+  #sheet-music .abcjs-cursor{
+    stroke:var(--pine);
+    stroke-width:2.5;
+    opacity:0.85;
+  }
+
+  #sheet-wrap{
+    border:1px solid var(--paper-line);border-top:none;
+    background:#FFFDF6;
+    padding:10px 6px;
+    border-radius:0 0 4px 4px;
+    overflow-x:auto;
+  }
+  #sheet-music{min-height:80px;}
+  #sheet-music .abcjs-note_selected{fill:var(--brass-dark)!important;}
+
+  .empty-hint{
+    color:var(--ink-soft);font-size:0.9rem;padding:26px 10px;text-align:center;font-style:italic;
+  }
+
+  details{margin-top:16px;}
+  summary{cursor:pointer;color:var(--brass-dark);font-size:0.86rem;}
+  #abc-output{
+    width:100%;min-height:120px;font-family: ui-monospace, monospace;font-size:0.82rem;
+    margin-top:8px;padding:10px;border:1px solid var(--paper-line);border-radius:3px;background:#fff;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Spartito</h1>
+    <p class="subtitle">Incolla un brano in notazione ABC, o carica un file .abc / .xml / .musicxml / .mxl — ottieni spartito, pulsantiera di esecuzione e trasposizione.</p>
+    <div class="staff-rule"></div>
+  </header>
+
+  <section class="panel">
+    <h2>Sorgente</h2>
+    <label for="inputText">Testo ABC oppure XML del MusicXML (incollalo qui)</label>
+    <textarea id="inputText" placeholder="X:1&#10;T:Titolo del brano&#10;M:4/4&#10;L:1/8&#10;K:C&#10;C2 D2 E2 F2 | G4 z4 |"></textarea>
+
+    <div class="row">
+      <div class="field">
+        <label for="fileInput">...oppure carica un file (.abc, .xml, .musicxml, .mxl)</label>
+        <input type="file" id="fileInput" accept=".abc,.xml,.musicxml,.mxl,*/*">
+        <p style="font-size:0.78rem;color:var(--ink-soft);margin:4px 0 0;">Se scegli il file da Google Drive e non lo vedi selezionabile, prova dal gestore file del dispositivo, oppure scarica prima il file in locale e poi caricalo da lì.</p>
+      </div>
+      <button id="processBtn">Genera spartito</button>
+    </div>
+    <div id="status" class="status"></div>
+  </section>
+
+  <section class="panel" id="output-panel" style="display:none;">
+    <h2>Spartito</h2>
+    <div class="transpose-field" id="tuneSelWrap" style="display:none;margin-bottom:12px;">
+      <label for="tuneSel" style="margin:0;">Brano nel file</label>
+      <select id="tuneSel" style="flex:1;min-width:220px;"></select>
+    </div>
+    <div id="controls-bar">
+      <div id="audio-controls"></div>
+      <div class="transpose-field">
+        <label for="instrumentSel" style="margin:0;">Strumento</label>
+        <select id="instrumentSel"></select>
+      </div>
+      <div class="transpose-field">
+        <label for="transposeSel" style="margin:0;">Semitoni</label>
+        <select id="transposeSel"></select>
+      </div>
+      <button class="secondary" id="stopBtn" type="button">Stop</button>
+    </div>
+    <div id="sheet-wrap">
+      <div id="sheet-music"></div>
+    </div>
+
+    <details>
+      <summary>Mostra codice ABC generato</summary>
+      <textarea id="abc-output" readonly></textarea>
+    </details>
+  </section>
+</div>
+
+<script>
+/* ============ Utilità di conversione MusicXML -> ABC ============ */
+
+const KIND_MAP = {
+  "major":"", "minor":"m", "dominant":"7", "major-seventh":"maj7", "minor-seventh":"m7",
+  "diminished":"dim", "augmented":"aug", "half-diminished":"m7b5", "suspended-fourth":"sus4",
+  "suspended-second":"sus2", "major-sixth":"6", "minor-sixth":"m6", "dominant-ninth":"9",
+  "major-ninth":"maj9", "minor-ninth":"m9", "diminished-seventh":"dim7", "power":"5",
+  "augmented-seventh":"aug7", "major-11th":"maj11", "dominant-13th":"13"
+};
+
+const MAJOR_KEYS = ["Cb","Gb","Db","Ab","Eb","Bb","F","C","G","D","A","E","B","F#","C#"];
+const MINOR_KEYS = ["Ab","Eb","Bb","F","C","G","D","A","E","B","F#","C#","G#","D#","A#"];
+
+function pitchToAbc(step, alter, octave){
+  const accMap = {"-2":"__","-1":"_","0":"","1":"^","2":"^^"};
+  const acc = accMap[String(alter||0)] || "";
+  let out;
+  if (octave >= 5){
+    out = step.toLowerCase() + "'".repeat(octave - 5);
+  } else if (octave === 4){
+    out = step;
+  } else {
+    out = step + ",".repeat(4 - octave);
+  }
+  return acc + out;
+}
+
+function chordSymbolFromHarmony(harmonyEl){
+  const root = harmonyEl.querySelector("root");
+  if(!root) return null;
+  const rootStep = root.querySelector("root-step")?.textContent || "";
+  const rootAlter = parseInt(root.querySelector("root-alter")?.textContent || "0", 10);
+  const kindEl = harmonyEl.querySelector("kind");
+  const kindVal = kindEl?.getAttribute("text") || kindEl?.textContent || "major";
+  const accSign = rootAlter === 1 ? "#" : rootAlter === -1 ? "b" : "";
+  let sym = rootStep + accSign + (KIND_MAP[kindVal] !== undefined ? KIND_MAP[kindVal] : kindVal.replace(/-/g," "));
+  const bass = harmonyEl.querySelector("bass bass-step");
+  if(bass) sym += "/" + bass.textContent;
+  return sym;
+}
+
+function musicXmlToAbc(xmlText){
+  const doc = new DOMParser().parseFromString(xmlText, "application/xml");
+  if (doc.querySelector("parsererror")) throw new Error("XML non valido o non leggibile.");
+
+  const part = doc.querySelector("part");
+  if(!part) throw new Error("Nessun elemento <part> trovato nel MusicXML.");
+
+  const title = doc.querySelector("work work-title")?.textContent
+             || doc.querySelector("movement-title")?.textContent
+             || "Brano senza titolo";
+  const composer = doc.querySelector('identification creator[type="composer"]')?.textContent || "";
+
+  let divisions = 1;
+  let fifths = 0, mode = "major";
+  let beats = 4, beatType = 4;
+  let headerCaptured = false;
+
+  const measures = Array.from(part.querySelectorAll("measure"));
+  let bodyLines = [];
+  let currentLine = "";
+  let measureCount = 0;
+  let lyricWords = [];
+  let hasLyrics = false;
+
+  measures.forEach(measure => {
+    const attrs = measure.querySelector("attributes");
+    if(attrs){
+      const div = attrs.querySelector("divisions");
+      if(div) divisions = parseFloat(div.textContent);
+      const fifthsEl = attrs.querySelector("key fifths");
+      if(fifthsEl && !headerCaptured) fifths = parseInt(fifthsEl.textContent, 10);
+      const modeEl = attrs.querySelector("key mode");
+      if(modeEl && !headerCaptured) mode = modeEl.textContent;
+      const beatsEl = attrs.querySelector("time beats");
+      const beatTypeEl = attrs.querySelector("time beat-type");
+      if(beatsEl && beatTypeEl && !headerCaptured){
+        beats = parseInt(beatsEl.textContent, 10);
+        beatType = parseInt(beatTypeEl.textContent, 10);
+      }
+      headerCaptured = true;
+    }
+
+    const children = Array.from(measure.children);
+    let beatsInMeasure = [];
+
+    children.forEach(el => {
+      if(el.tagName === "harmony"){
+        const sym = chordSymbolFromHarmony(el);
+        if(sym) beatsInMeasure.push({type:"chordsym", sym});
+      } else if(el.tagName === "note"){
+        const isChordTone = !!el.querySelector("chord");
+        const isRest = !!el.querySelector("rest");
+        const durationEl = el.querySelector("duration");
+        const duration = durationEl ? parseFloat(durationEl.textContent) : divisions/2;
+        let lengthUnits = Math.max(1, Math.round((duration / (divisions/2))));
+        const lenSuffix = lengthUnits === 1 ? "" : String(lengthUnits);
+
+        let token;
+        if(isRest){
+          token = "z" + lenSuffix;
+        } else {
+          const pitchEl = el.querySelector("pitch");
+          const step = pitchEl.querySelector("step").textContent;
+          const alter = parseInt(pitchEl.querySelector("alter")?.textContent || "0", 10);
+          const octave = parseInt(pitchEl.querySelector("octave").textContent, 10);
+          token = pitchToAbc(step, alter, octave) + lenSuffix;
+          const tie = el.querySelector("tie[type='start'], notations tied[type='start']");
+          if(tie) token += "-";
+        }
+
+        const lyricEl = el.querySelector("lyric text");
+        if(lyricEl){
+          hasLyrics = true;
+          const syllabic = el.querySelector("lyric syllabic")?.textContent || "single";
+          let syl = lyricEl.textContent;
+          if(syllabic === "begin" || syllabic === "middle") syl += "-";
+          lyricWords.push(syl);
+        } else if(!isChordTone && !isRest){
+          lyricWords.push("*");
+        }
+
+        if(isChordTone && beatsInMeasure.length){
+          const last = beatsInMeasure[beatsInMeasure.length-1];
+          if(last.type === "note"){
+            last.pitches.push(token.replace(/[0-9]+$/,""));
+          }
+        } else {
+          beatsInMeasure.push({type:"note", pitches:[token], raw: !isRest});
+        }
+      }
+    });
+
+    beatsInMeasure.forEach(b => {
+      if(b.type === "chordsym"){
+        currentLine += `"${b.sym}"`;
+      } else if(b.pitches.length > 1){
+        currentLine += "[" + b.pitches.join("") + "] ";
+      } else {
+        currentLine += b.pitches[0] + " ";
+      }
+    });
+    currentLine += "| ";
+    measureCount++;
+    if(measureCount % 4 === 0){
+      bodyLines.push(currentLine.trim());
+      currentLine = "";
+    }
+  });
+  if(currentLine.trim()) bodyLines.push(currentLine.trim());
+  if(bodyLines.length) bodyLines[bodyLines.length-1] += "]";
+
+  const fifthsIdx = Math.max(0, Math.min(14, fifths + 7));
+  const keyLetter = (mode === "minor") ? MINOR_KEYS[fifthsIdx] + "m" : MAJOR_KEYS[fifthsIdx];
+
+  let abc = `X:1\nT:${title}\n`;
+  if(composer) abc += `C:${composer}\n`;
+  abc += `M:${beats}/${beatType}\nL:1/8\nK:${keyLetter}\n`;
+  bodyLines.forEach((line, i) => {
+    abc += line + "\n";
+    if(hasLyrics){
+      const wordsForLine = lyricWords.splice(0, (line.match(/[A-Ga-gz]/g)||[]).length);
+      if(wordsForLine.some(w => w !== "*")){
+        abc += "w: " + wordsForLine.join(" ") + "\n";
+      }
+    }
+  });
+  return abc;
+}
+
+async function extractMusicXmlFromMxl(arrayBuffer){
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  let targetPath = null;
+  const containerFile = zip.file("META-INF/container.xml");
+  if(containerFile){
+    const containerText = await containerFile.async("string");
+    const containerDoc = new DOMParser().parseFromString(containerText, "application/xml");
+    targetPath = containerDoc.querySelector("rootfile")?.getAttribute("full-path");
+  }
+  if(!targetPath){
+    targetPath = Object.keys(zip.files).find(n => /\.(musicxml|xml)$/i.test(n) && !/container\.xml$/i.test(n));
+  }
+  if(!targetPath || !zip.file(targetPath)) throw new Error("Impossibile trovare il MusicXML dentro il file .mxl.");
+  return await zip.file(targetPath).async("string");
+}
+
+/* ============ Interazione con abcjs ============ */
+
+let currentAbc = "";
+let synthControl = null;
+let tuneObject = null;
+let tuneChunks = [];   // {title, abc} quando il file contiene più brani (tunebook ABC)
+
+const INSTRUMENT_PRESETS = [
+  { label: "Concerto (Do) — nessuna trasposizione", semis: 0 },
+  { label: "Sib — tromba, clarinetto, sax soprano", semis: 2 },
+  { label: "Sib basso — sax tenore, clarinetto basso", semis: 14 },
+  { label: "Mib — sax contralto, clarinetto mib", semis: 9 },
+  { label: "Mib basso — sax baritono", semis: 21 },
+  { label: "Fa — corno francese", semis: 7 },
+  { label: "Personalizzato...", semis: null }
+];
+
+function buildTransposeOptions(){
+  const sel = document.getElementById("transposeSel");
+  sel.innerHTML = "";
+  for(let i=-24;i<=24;i++){
+    const opt = document.createElement("option");
+    opt.value = i;
+    opt.textContent = i === 0 ? "Originale" : (i>0 ? `+${i} semitoni` : `${i} semitoni`);
+    if(i===0) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+buildTransposeOptions();
+
+function buildInstrumentOptions(){
+  const sel = document.getElementById("instrumentSel");
+  sel.innerHTML = "";
+  INSTRUMENT_PRESETS.forEach((p, idx) => {
+    const opt = document.createElement("option");
+    opt.value = idx;
+    opt.textContent = p.label;
+    sel.appendChild(opt);
+  });
+}
+buildInstrumentOptions();
+
+function setStatus(msg, kind){
+  const el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+async function renderAndPlay(abc, transposeSemitones){
+  currentAbc = abc;
+  document.getElementById("abc-output").value = abc;
+  document.getElementById("output-panel").style.display = "block";
+
+  const visualObjs = ABCJS.renderAbc("sheet-music", abc, {
+    responsive: "resize",
+    add_classes: true,
+    visualTranspose: transposeSemitones || 0
+  });
+  tuneObject = visualObjs[0];
+
+  const audioDiv = document.getElementById("audio-controls");
+  audioDiv.innerHTML = "";
+
+  if(!ABCJS.synth.supportsAudio()){
+    audioDiv.textContent = "Il browser non supporta la riproduzione audio (Web Audio API).";
+    return;
+  }
+
+  const cursorControl = {
+    beatSubdivisions: 2,
+    onStart: () => {
+      const svg = document.querySelector("#sheet-music svg");
+      if(!svg) return;
+      let cursor = svg.querySelector(".abcjs-cursor");
+      if(!cursor){
+        cursor = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        cursor.setAttribute("class", "abcjs-cursor");
+        svg.appendChild(cursor);
+      }
+      cursor.setAttribute("x1", 0); cursor.setAttribute("x2", 0);
+      cursor.setAttribute("y1", 0); cursor.setAttribute("y2", 0);
+    },
+    onEvent: (ev) => {
+      document.querySelectorAll("#sheet-music .highlight").forEach(n => n.classList.remove("highlight"));
+      if(ev.elements){
+        ev.elements.forEach(group => group.forEach(n => n.classList.add("highlight")));
+      }
+      const cursor = document.querySelector("#sheet-music svg .abcjs-cursor");
+      if(cursor && ev.left !== undefined){
+        cursor.setAttribute("x1", ev.left - 2);
+        cursor.setAttribute("x2", ev.left - 2);
+        cursor.setAttribute("y1", ev.top);
+        cursor.setAttribute("y2", ev.top + ev.height);
+      }
+    },
+    onFinished: () => {
+      document.querySelectorAll("#sheet-music .highlight").forEach(n => n.classList.remove("highlight"));
+      const cursor = document.querySelector("#sheet-music svg .abcjs-cursor");
+      if(cursor){
+        cursor.setAttribute("x1", 0); cursor.setAttribute("x2", 0);
+        cursor.setAttribute("y1", 0); cursor.setAttribute("y2", 0);
+      }
+    }
+  };
+
+  synthControl = new ABCJS.synth.SynthController();
+  synthControl.load("#audio-controls", cursorControl, {
+    displayLoop: true, displayRestart: true, displayPlay: true, displayProgress: true, displayWarp: true
+  });
+
+  const synth = new ABCJS.synth.CreateSynth();
+  await synth.init({ visualObj: tuneObject });
+  await synthControl.setTune(tuneObject, false);
+}
+
+document.getElementById("stopBtn").addEventListener("click", () => {
+  if(synthControl) synthControl.pause();
+});
+
+async function applyTranspose(semitones){
+  if(!currentAbc) return;
+  setStatus("Ritrasposizione in corso...", "");
+  try{
+    await renderAndPlay(currentAbc, semitones);
+    setStatus("Pronto.", "ok");
+  }catch(err){
+    setStatus("Errore nella trasposizione: " + err.message, "error");
+  }
+}
+
+document.getElementById("transposeSel").addEventListener("change", (e) => {
+  const val = parseInt(e.target.value, 10);
+  const matchIdx = INSTRUMENT_PRESETS.findIndex(p => p.semis === val);
+  document.getElementById("instrumentSel").value = matchIdx >= 0 ? matchIdx : INSTRUMENT_PRESETS.length - 1;
+  applyTranspose(val);
+});
+
+document.getElementById("instrumentSel").addEventListener("change", (e) => {
+  const preset = INSTRUMENT_PRESETS[parseInt(e.target.value, 10)];
+  if(preset.semis === null) return; // "Personalizzato": lascia scegliere il semitono a mano
+  document.getElementById("transposeSel").value = preset.semis;
+  applyTranspose(preset.semis);
+});
+
+/* ---- Gestione tunebook (più brani nello stesso file ABC) ---- */
+
+function splitTunebook(abcText){
+  const lines = abcText.split(/\r?\n/);
+  const chunks = [];
+  let current = [];
+  lines.forEach(line => {
+    if(/^X:\s*\d+/.test(line) && current.length){
+      chunks.push(current.join("\n"));
+      current = [line];
+    } else {
+      current.push(line);
+    }
+  });
+  if(current.length) chunks.push(current.join("\n"));
+  return chunks.map(chunk => {
+    const titleMatch = chunk.match(/^T:\s*(.+)$/m);
+    return { title: titleMatch ? titleMatch[1].trim() : "Brano senza titolo", abc: chunk.trim() };
+  });
+}
+
+async function selectTune(idx){
+  const chunk = tuneChunks[idx];
+  document.getElementById("transposeSel").value = 0;
+  document.getElementById("instrumentSel").value = 0;
+  setStatus("Caricamento brano...", "");
+  try{
+    await renderAndPlay(chunk.abc, 0);
+    setStatus("Pronto.", "ok");
+  }catch(err){
+    setStatus("Errore nel brano selezionato: " + err.message, "error");
+  }
+}
+
+document.getElementById("tuneSel").addEventListener("change", (e) => {
+  selectTune(parseInt(e.target.value, 10));
+});
+
+async function finalizeAbc(abc){
+  document.getElementById("transposeSel").value = 0;
+  document.getElementById("instrumentSel").value = 0;
+
+  const tuneSelWrap = document.getElementById("tuneSelWrap");
+  const tuneCount = (abc.match(/^X:\s*\d+/gm) || []).length;
+
+  if(tuneCount > 1){
+    tuneChunks = splitTunebook(abc);
+    const tuneSel = document.getElementById("tuneSel");
+    tuneSel.innerHTML = "";
+    tuneChunks.forEach((t, i) => {
+      const opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = `${i+1}. ${t.title}`;
+      tuneSel.appendChild(opt);
+    });
+    tuneSelWrap.style.display = "flex";
+    await renderAndPlay(tuneChunks[0].abc, 0);
+    setStatus(`Trovati ${tuneCount} brani nel file. Scegli quale eseguire dal menu "Brano nel file".`, "ok");
+  } else {
+    tuneChunks = [];
+    tuneSelWrap.style.display = "none";
+    await renderAndPlay(abc, 0);
+    setStatus("Spartito generato correttamente.", "ok");
+  }
+}
+
+async function handleProcess(){
+  const fileInput = document.getElementById("fileInput");
+  const textInput = document.getElementById("inputText").value.trim();
+  setStatus("Elaborazione...", "");
+  document.getElementById("processBtn").disabled = true;
+  try{
+    let abc;
+    if(fileInput.files.length){
+      const file = fileInput.files[0];
+      if(/\.mxl$/i.test(file.name)){
+        const buf = await file.arrayBuffer();
+        const xmlText = await extractMusicXmlFromMxl(buf);
+        abc = musicXmlToAbc(xmlText);
+      } else {
+        const text = await file.text();
+        abc = /^\s*</.test(text) ? musicXmlToAbc(text) : text;
+      }
+    } else if(textInput){
+      abc = /^\s*</.test(textInput) ? musicXmlToAbc(textInput) : textInput;
+    } else {
+      throw new Error("Incolla del testo o carica un file prima di procedere.");
+    }
+    await finalizeAbc(abc);
+  }catch(err){
+    setStatus("Errore: " + err.message, "error");
+    document.getElementById("output-panel").style.display = "none";
+  }finally{
+    document.getElementById("processBtn").disabled = false;
+  }
+}
+
+document.getElementById("processBtn").addEventListener("click", handleProcess);
+
+/* ---- Ingresso diretto da Flutter (InAppWebView): niente fetch, i byte del
+   documento arrivano già in memoria dall'app, codificati in base64. ---- */
+window.loadFromFlutter = async function(base64Content, docType) {
+  document.querySelector(".panel").style.display = "none";
+  setStatus("Caricamento documento...", "");
+  try {
+    const binaryStr = atob(base64Content);
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+
+    let abc;
+    if (docType === "mxl") {
+      const xmlText = await extractMusicXmlFromMxl(bytes.buffer);
+      abc = musicXmlToAbc(xmlText);
+    } else {
+      const text = new TextDecoder("utf-8").decode(bytes);
+      abc = /^\s*</.test(text) ? musicXmlToAbc(text) : text;
+    }
+    await finalizeAbc(abc);
+  } catch (err) {
+    setStatus("Errore nel caricamento del documento: " + err.message, "error");
+  }
+};
+
+/* ---- Auto-caricamento da URL: spartito-viewer.html?doc=ID&type=abc|mxl&api=/documents ----
+   Pensato per essere invocato da una pagina esterna (es. il dettaglio brano del tuo
+   web server), passando l'id del documento invece di far incollare/caricare il file. */
+(async function autoLoadFromQuery(){
+  const params = new URLSearchParams(location.search);
+  const docId = params.get("doc");
+  if(!docId) return;
+
+  const docType = (params.get("type") || "").toLowerCase();
+  const apiBase = params.get("api");
+  // Se arriva 'api' (indirizzo base, es. http://host/api/documents), componiamo
+  // noi l'endpoint specifico del documento verso /raw (contenuto grezzo,
+  // senza redirect né forzare il download). Senza 'api', fallback relativo
+  // per compatibilità con un uso standalone dello strumento.
+  const endpoint = apiBase
+    ? `${apiBase}/${encodeURIComponent(docId)}/raw`
+    : ("/documents/" + encodeURIComponent(docId));
+
+  document.querySelector(".panel").style.display = "none"; // nasconde il pannello di input manuale
+  setStatus("Caricamento documento dal server...", "");
+  try{
+    let abc;
+    const response = await fetch(endpoint);
+    if(!response.ok) throw new Error(`Il server ha risposto ${response.status}`);
+
+    if(docType === "mxl"){
+      const buf = await response.arrayBuffer();
+      const xmlText = await extractMusicXmlFromMxl(buf);
+      abc = musicXmlToAbc(xmlText);
+    } else {
+      const text = await response.text();
+      abc = /^\s*</.test(text) ? musicXmlToAbc(text) : text;
+    }
+    await finalizeAbc(abc);
+  }catch(err){
+    setStatus("Errore nel caricamento del documento: " + err.message, "error");
+  }
+})();
+</script>
+</body>
+</html>
