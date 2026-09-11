@@ -5,7 +5,7 @@
  * - Configurazione Express con tutti i middleware
  * - Gestione CORS, Helmet, Compressione
  * - Middleware personalizzati (correlationId, performance, errorHandler)
- * - Connessione al database
+ * - Connessione al database + Turso embedded replica
  * - Routes API
  * - Gestione errori e shutdown graceful
  */
@@ -30,6 +30,14 @@ const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 // Database
 const { sequelize, testConnection } = require('./config/database');
+
+// Turso sync (embedded replica)
+const {
+  initTursoSync,
+  forceSyncNow,
+  stopTursoSync,
+  getTursoStatus,
+} = require('./config/turso-sync');
 
 // Routes
 const songsRoutes = require('./routes/songs');
@@ -114,7 +122,8 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    correlationId: req.correlationId
+    correlationId: req.correlationId,
+    turso: getTursoStatus(),
   });
 });
 
@@ -139,27 +148,35 @@ app.use(errorHandler);
 
 async function startServer() {
   try {
-    // Test connessione database
+    // 1. Inizializza sync Turso (pull dal cloud PRIMA di Sequelize)
+    const tursoEnabled = await initTursoSync();
+    if (tursoEnabled) {
+      logger.info('🔄 Turso embedded replica attiva');
+    } else {
+      logger.info('ℹ️ Turso embedded replica disattivata (solo SQLite locale)');
+    }
+
+    // 2. Test connessione database locale
     const dbConnected = await testConnection();
     if (!dbConnected) {
       logger.error('❌ Database connection failed. Exiting...');
       process.exit(1);
     }
 
-    // Sincronizza i modelli (solo in sviluppo)
+    // 3. Sincronizza i modelli (solo in sviluppo)
     if (process.env.NODE_ENV !== 'production') {
-     // SYNC DISABILITATO - uso database esistente
-     console.log('ℹ️  Database sync disabilitato - uso struttura esistente');
-     // await sequelize.sync({ alter: true });
+      // SYNC DISABILITATO - uso database esistente
+      console.log('ℹ️  Database sync disabilitato - uso struttura esistente');
+      // await sequelize.sync({ alter: true });
       logger.info('📦 Database models synced');
     }
 
-    // Avvia il server
+    // 4. Avvia il server
     app.listen(PORT, () => {
       logger.info(`🚀 Server running on http://localhost:${PORT}`);
       logger.info(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.info(`🔗 Health check: http://localhost:${PORT}/api/health`);
-      logger.info(`📁 Logs directory: ${path.join(__dirname, '../logs')}`);
+      logger.info(`📝 Logs directory: ${path.join(__dirname, '../logs')}`);
 
       // Mostra i modelli caricati
       const models = Object.keys(sequelize.models);
@@ -181,21 +198,32 @@ async function startServer() {
 // SHUTDOWN GRACEFUL
 // ============================================
 
-process.on('SIGTERM', () => {
-  logger.info('🛑 SIGTERM received. Shutting down gracefully...');
-  sequelize.close().then(() => {
-    logger.info('✅ Database connection closed.');
-    process.exit(0);
-  });
-});
+async function gracefulShutdown(signal) {
+  logger.info(`🛑 ${signal} received. Shutting down gracefully...`);
 
-process.on('SIGINT', () => {
-  logger.info('🛑 SIGINT received. Shutting down gracefully...');
-  sequelize.close().then(() => {
+  // 1. Ferma sync periodica
+  stopTursoSync();
+
+  // 2. Push finale verso Turso (best effort)
+  try {
+    await forceSyncNow();
+  } catch (e) {
+    logger.warn('⚠️ Sync finale fallita:', { error: e.message });
+  }
+
+  // 3. Chiudi Sequelize
+  try {
+    await sequelize.close();
     logger.info('✅ Database connection closed.');
-    process.exit(0);
-  });
-});
+  } catch (e) {
+    logger.warn('⚠️ Errore chiusura Sequelize:', { error: e.message });
+  }
+
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // ============================================
 // GESTIONE ERRORI NON CATTURATI
