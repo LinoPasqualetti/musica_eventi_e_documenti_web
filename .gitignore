@@ -36,10 +36,24 @@ npm-debug.log*
 # Database locale (copia web — NON committare)
 # ============================================
 backend/data/*.db
-backend/data/*.db.bak
+backend/data/*.db-*
 backend/data/*.sqlite
 backend/data/*.sqlite3
+backend/data/*pre_turso*
+backend/data/*backup*
+backend/data/*.bak
+backend/data/*.bis
+backend/data/*.attuale
+backend/data/client_wal_index
 scripts/last_sync.json
+
+# ============================================
+# Script di migrazione Turso (temporanei)
+# ============================================
+backend/dump_*.sql
+backend/import_errors.json
+backend/sqlite3.exe
+*.exe
 
 # ============================================
 # Upload (se usi multer per documenti)
