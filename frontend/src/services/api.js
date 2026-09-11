@@ -62,10 +62,14 @@ export const songService = {
 export const documentService = {
   getAll: (params) => api.get('/documents', { params }),
   getById: (id) => api.get(`/documents/${id}`),
-  download: (id) => api.get(`/documents/${id}/download`, { responseType: 'blob' }),
-  downloadUrl: (id) => `${API_URL}/documents/${id}/download`,
-  rawUrl: (id) => `${API_URL}/documents/${id}/raw`,
+  // Il backend espone /content per il binario
+  contentUrl: (id) => `${API_URL}/documents/${id}/content`,
   viewUrl: (id) => `${API_URL}/documents/${id}/view`,
+  // Alias usato altrove
+  downloadUrl: (id) => `${API_URL}/documents/${id}/content`,
+  rawUrl: (id) => `${API_URL}/documents/${id}/content`,
+  // Utility per scaricare come blob (es. pulsante "download")
+  download: (id) => api.get(`/documents/${id}/content`, { responseType: 'blob' }),
 };
 
 export default api;
