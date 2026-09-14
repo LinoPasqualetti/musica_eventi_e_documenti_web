@@ -1,0 +1,44 @@
+# Node.js
+node_modules/
+npm-debug.log*
+
+# Database locale + backup
+data/
+*.db
+*.db.*
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.db-info
+
+# Dump SQL (grossi)
+dump_*.sql
+*.sql
+
+# Script di analisi e test
+analisi_*.ps1
+analisi_*.txt
+test-turso*.js
+test-nxtmd.js
+*.log
+
+# Ambiente locale (i secrets vanno su Fly)
+.env
+.env.local
+.env.production
+
+# Backup vari
+*.bak
+*.backup
+*.old
+*.zip
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

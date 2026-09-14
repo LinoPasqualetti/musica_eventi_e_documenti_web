@@ -54,16 +54,14 @@ const logger = winston.createLogger({
   ]
 });
 
-// In sviluppo, aggiungi console colorata
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(new winston.transports.Console({
-    format: combine(
-      colorize(),
-      timestamp({ format: 'HH:mm:ss' }),
-      consoleFormat
-    ),
-    level: 'debug'
-  }));
-}
+// Console transport: sempre attivo (anche in produzione, così i log finiscono su stdout)
+logger.add(new winston.transports.Console({
+  format: combine(
+    colorize(),
+    timestamp({ format: 'HH:mm:ss' }),
+    consoleFormat
+  ),
+  level: process.env.NODE_ENV === 'production' ? 'info' : 'debug'
+}));
 
 module.exports = logger;

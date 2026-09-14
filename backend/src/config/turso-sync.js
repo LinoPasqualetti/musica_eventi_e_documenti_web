@@ -26,58 +26,48 @@ async function initTursoSync() {
   const url = process.env.TURSO_DATABASE_URL;
   const token = process.env.TURSO_AUTH_TOKEN;
 
-  // Se Turso non è configurato, disabilita silenziosamente
   if (!url || !token) {
-    logger.info('ℹ️ Turso non configurato, sync disabilitata (uso solo SQLite locale)');
+    logger.info('ℹ️ Turso non configurato, sync disabilitata');
     return false;
   }
 
+  // ⚠️ In produzione (Zeabur, Koyeb, ecc.) il filesystem è effimero.
+  // Saltiamo la replica embedded e ci connettiamo direttamente a Turso.
+  if (process.env.NODE_ENV === 'production') {
+    logger.info('🌐 Modalità produzione: connessione diretta a Turso Cloud (nessuna replica locale).');
+    return false;
+  }
+
+  // In sviluppo: embedded replica (come ora)
   const dbPath = path.resolve(
     process.env.DB_STORAGE || './data/musica_eventi_e_documenti_web.db'
   );
 
   try {
     logger.info('🔄 Inizializzazione embedded replica Turso...');
-    logger.info(`   URL cloud: ${url}`);
-    logger.info(`   File locale: ${dbPath}`);
-
-    // Crea il client con sync URL
     tursoClient = createClient({
       url: `file:${dbPath}`,
       syncUrl: url,
       authToken: token,
-      syncInterval: 60, // sync automatica ogni 60s (opzionale, la gestiamo manualmente)
+      syncInterval: 60,
     });
 
-    // Primo sync: pull dal cloud
-    const startTime = Date.now();
     await tursoClient.sync();
-    const elapsed = Date.now() - startTime;
-    lastSyncTime = Date.now();
+    logger.info('✅ Turso sync iniziale completata');
 
-    logger.info(`✅ Turso sync iniziale completata in ${elapsed}ms`);
-
-    // Avvia sync periodica ogni 60 secondi
     const intervalMs = parseInt(process.env.TURSO_SYNC_INTERVAL) || 60000;
     syncTimer = setInterval(async () => {
       try {
         await tursoClient.sync();
         lastSyncTime = Date.now();
-        logger.debug('🔄 Turso sync periodica OK');
       } catch (err) {
         logger.warn('⚠️ Turso sync periodica fallita:', { error: err.message });
       }
     }, intervalMs);
 
-    logger.info(`⏱️ Sync periodica attiva ogni ${intervalMs / 1000}s`);
-
     return true;
   } catch (err) {
-    logger.error('❌ Errore inizializzazione Turso:', {
-      error: err.message,
-      stack: err.stack
-    });
-    logger.warn('⚠️ Continuo con SQLite locale senza sync');
+    logger.error('❌ Errore Turso:', { error: err.message });
     return false;
   }
 }

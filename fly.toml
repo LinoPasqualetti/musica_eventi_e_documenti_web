@@ -1,0 +1,27 @@
+app = "musica-eventi-e-documenti-web"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  DB_DIALECT = "sqlite"
+  DB_STORAGE = "/data/musica_eventi_e_documenti_web.db"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1024mb"
+
+[mounts]
+  source = "musica_data"
+  destination = "/data"

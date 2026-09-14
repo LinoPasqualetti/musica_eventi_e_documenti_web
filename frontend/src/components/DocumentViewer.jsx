@@ -15,7 +15,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import MidiPlayer from './MidiPlayer';
 import ScoreViewer from './ScoreViewer';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = '/api';
 
 function resolveKind(doc) {
   const ext = (doc.file_name || '').split('.').pop().toLowerCase();

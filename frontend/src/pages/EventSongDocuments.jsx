@@ -20,7 +20,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 import DocumentViewer from '../components/DocumentViewer';
 import { eventService } from '../services/api';
 
-const API_BASE = 'http://localhost:5000/api';
+const API_BASE = '/api';
 
 function iconFor(doc) {
   const ext = (doc.file_name || '').split('.').pop().toLowerCase();
