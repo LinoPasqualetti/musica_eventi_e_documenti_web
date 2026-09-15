@@ -1,9 +1,10 @@
 {
   "name": "scripts",
   "version": "1.0.0",
-  "description": "",
+  "description": "Script di sincronizzazione DB desktop → DB web",
   "main": "sync-incremental.js",
   "scripts": {
+    "sync": "node sync-incremental.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

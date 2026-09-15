@@ -54,6 +54,34 @@ exports.getSongsByEvent = async (req, res, next) => {
     next(error);
   }
 };
+/**
+ * GET /api/songs
+ * Elenco di tutte le canzoni, con filtri opzionali.
+ * Query params: ?difficulty=...&genre=...&limit=...&offset=...
+ */
+exports.getAllSongs = async (req, res, next) => {
+  try {
+    const { Song } = require('../models');
+
+    const where = {};
+    if (req.query.difficulty) where.difficulty = req.query.difficulty;
+    if (req.query.genre) where.genre = req.query.genre;
+
+    const limit = parseInt(req.query.limit, 10) || 1000;
+    const offset = parseInt(req.query.offset, 10) || 0;
+
+    const songs = await Song.findAll({
+      where,
+      order: [['title', 'ASC']],
+      limit,
+      offset,
+    });
+
+    res.json(songs);
+  } catch (error) {
+    next(error);
+  }
+};
 
 /**
  * Ottieni una canzone specifica con i suoi documenti

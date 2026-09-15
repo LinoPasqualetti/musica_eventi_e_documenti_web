@@ -1,3 +1,11 @@
+// [DISABLED] Questo script è stato disabilitato perché pericoloso.
+// Copia TUTTO il DB desktop nel DB web, incluse le tabelle web-first
+// (user_feedback, event_suggestions, ecc.) e bidirezionali (registrations,
+// users), sovrascrivendo i dati creati dal web.
+//
+// Usa invece: node sync-incremental.js
+console.error('❌ full-copy.js è DISABILITATO. Usa sync-incremental.js');
+process.exit(1);
 // Copia completa e atomica del database sorgente (quello dell'app Flutter)
 // verso la copia usata dal web server — sostituisce sync-incremental.js.
 //

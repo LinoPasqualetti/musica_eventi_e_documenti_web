@@ -9,6 +9,7 @@ import EventSongsAssignment from './pages/EventSongsAssignment';
 import EventSetlist from './pages/EventSetlist';
 import EventSongDocuments from './pages/EventSongDocuments';
 import ViewerPage from './pages/ViewerPage';                 // <<< NUOVO
+import MxlViewerPage from './pages/MxlViewerPage';
 
 const theme = createTheme({
   palette: {
@@ -29,6 +30,7 @@ function App() {
           <Route path="/event/:id/setlist" element={<EventSetlist />} />
           <Route path="/event/:id/song/:songId" element={<EventSongDocuments />} />
           <Route path="/viewer" element={<ViewerPage />} />            {/* <<< NUOVO */}
+		  <Route path="/mxl-viewer" element={<MxlViewerPage />} />
         </Routes>
       </BrowserRouter>
     </ThemeProvider>

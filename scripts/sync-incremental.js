@@ -123,20 +123,29 @@ async function syncTables() {
 
   try {
     // Lista delle tabelle da sincronizzare
-    const tables = [
-      'users',
-      'songs',
-      'events',
-      'documents',
-      'event_songs',
-      'song_documents',
-      'event_song_documents',
-      'registrations',
-      'event_assignments',
-      'instrument_parts',
-      'musical_documents',
-      'song_infos'
-    ];
+// NOTA: 'users' e 'registrations' sono state rimosse.
+// Sono tabelle BIDIREZIONALI: il web le scrive (utenti si iscrivono, admin
+// valida sul web) e il desktop le modifica (admin valida sul desktop).
+// Copiarle con questa sync rischierebbe di sovrascrivere dati web con dati
+// desktop non ancora sincronizzati via HTTP (vedi WebSyncService).
+// La sincronizzazione di queste tabelle avviene SOLO via API HTTP:
+//   - GET  /api/registrations?status=pending  (pull)
+//   - POST /api/registrations/mark-exported   (post-pull)
+//   - PUT  /api/registrations/:id/status      (push)
+const tables = [
+  // 'users',            // rimossa - bidirezionale
+  'songs',
+  'events',
+  'documents',
+  'event_songs',
+  'song_documents',
+  'event_song_documents',
+  // 'registrations',    // rimossa - bidirezionale
+  'event_assignments',
+  'instrument_parts',
+  'musical_documents',
+  'song_infos'
+];
 
     let totalRecords = 0;
 
@@ -256,10 +265,21 @@ async function syncTables() {
             .filter(col => col !== 'id')
             .map(col => row[col]);
 
+          // Per alcune tabelle il conflict su `id` non basta: `song_documents` ha
+          // anche UNIQUE(document_id, song_id), `event_songs` ha UNIQUE(event_id,
+          // song_id), ecc. Se una riga con id diverso ma stessa coppia esiste,
+          // ON CONFLICT(id) non scatta e l'INSERT fallisce con UNIQUE constraint.
+          const conflictTargets = {
+            'song_documents': 'id, document_id, song_id',
+            'event_songs': 'id, event_id, song_id',
+            'event_song_documents': 'id, event_song_id, document_id',
+          };
+
+          const conflictTarget = conflictTargets[tableName] || 'id';
           const query = `
             INSERT INTO ${tableName} (${columns.join(', ')})
             VALUES (${placeholders})
-            ON CONFLICT(id) DO UPDATE SET ${updateClause}
+            ON CONFLICT(${conflictTarget}) DO UPDATE SET ${updateClause}
           `;
 
           await new Promise((resolve, reject) => {
@@ -315,9 +335,18 @@ async function syncTables() {
       }
     }
 
-    // Salva il timestamp
-    const newTimestamp = new Date().toISOString();
-    saveLastSyncTime(newTimestamp);
+// Salva il timestamp SOLO se non ci sono stati errori.
+// Altrimenti, al prossimo sync i record mancanti verranno ritentati
+// (perché updated_at sarà ancora > lastSync).
+if (tableErrors.length === 0) {
+  const newTimestamp = new Date().toISOString();
+  saveLastSyncTime(newTimestamp);
+  console.log('');
+  console.log(`📅 Nuovo timestamp: ${newTimestamp}`);
+} else {
+  console.log('');
+  console.log('⚠️  lastSync NON aggiornato per permettere il retry dei record falliti');
+}
 
     console.log('');
     console.log('✅ SINCRONIZZAZIONE COMPLETATA!');

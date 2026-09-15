@@ -15,6 +15,8 @@ console.log('📦 songController importato:', Object.keys(songController));
 // ROTTE
 // ============================================
 
+// GET /api/songs - Elenco di tutte le canzoni
+router.get('/', songController.getAllSongs);
 // GET /api/songs/event/:eventId - Canzoni di un evento
 router.get('/event/:eventId', songController.getSongsByEvent);
 

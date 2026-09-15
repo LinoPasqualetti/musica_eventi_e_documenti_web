@@ -81,3 +81,15 @@ desktop.ini
 *.tmp
 *.bak
 *.old
+# Script sync
+scripts/last_sync.json
+scripts/last_sync.json.backup
+
+# File di Office temporanei
+~$*.docx
+# Script sync
+scripts/last_sync.json
+scripts/last_sync.json.backup
+
+# File di Office temporanei
+~$*.docx

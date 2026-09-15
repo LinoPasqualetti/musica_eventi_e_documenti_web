@@ -19,6 +19,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const path = require('path');
+const { UPLOADS_DIR } = require('./config/paths');
 
 // Logger
 const logger = require('./config/logger');
@@ -44,6 +45,7 @@ const songsRoutes = require('./routes/songs');
 const eventsRoutes = require('./routes/events');
 const documentsRoutes = require('./routes/documents');
 const registrationsRoutes = require('./routes/registrations');
+const mxlTempRoutes = require('./routes/mxlTemp');
 const abcTempRoutes = require('./routes/abcTemp');           // <<< NUOVO
 
 // ============================================
@@ -84,7 +86,12 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // ============================================
 // FRONTEND STATICO (build React/Vite)
 // ============================================
-app.use(express.static(path.join(__dirname, '../../frontend/dist')));
+// Serve i file uploads dal volume persistente (data/uploads/)
+// Grazie a config/paths.js, il path è automatico:
+//   - development: backend/data/uploads/
+//   - production:  /data/uploads/
+app.use('/uploads', express.static(UPLOADS_DIR));
+//app.use(express.static(path.join(__dirname, '../../frontend/dist')));
 
 // ============================================
 // MIDDLEWARE PERSONALIZZATI
@@ -94,8 +101,6 @@ app.use(express.static(path.join(__dirname, '../../frontend/dist')));
 app.use(correlationIdMiddleware);
 app.use(performanceMiddleware);
 
-app.use('/api/registrations', registrationsRoutes);
-app.use('/api/abc-temp', abcTempRoutes);
 
 // 2. Logging delle richieste (solo in sviluppo)
 if (process.env.NODE_ENV !== 'production') {
@@ -141,6 +146,9 @@ app.use('/api/songs', songsRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/documents', documentsRoutes);
 app.use('/api/registrations', registrationsRoutes);
+// ─── AGGIUNGI SUBITO DOPO ───
+app.use('/api/abc-temp', abcTempRoutes);
+app.use('/api/mxl-temp', mxlTempRoutes);
 // ============================================
 // SPA FALLBACK (React Router)
 // Tutte le route non-API vengono servite da index.html
