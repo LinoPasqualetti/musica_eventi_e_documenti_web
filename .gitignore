@@ -93,3 +93,30 @@ scripts/last_sync.json.backup
 
 # File di Office temporanei
 ~$*.docx
+# ============================================
+# SoundFont (grandi, rigenerabili con sf2-json)
+# ============================================
+backend/public/soundfonts/
+
+# ============================================
+# Report e script di analisi temporanei
+# ============================================
+analisi_web.txt
+analisi_backend.ps1
+analisi_web.ps1
+check-web.ps1
+
+# ============================================
+# Documenti Word
+# ============================================
+*.docx
+*.doc
+*.odt
+
+# ============================================
+# Backup e file temporanei
+# ============================================
+*.bak
+*.old
+*.orig
+*.tmp

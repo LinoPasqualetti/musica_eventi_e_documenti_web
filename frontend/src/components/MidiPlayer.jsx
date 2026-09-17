@@ -1,18 +1,29 @@
-// src/components/MidiPlayer.jsx — QUALITÀ MIGLIORATA
-import React, { useEffect, useRef, useState } from 'react';
+// src/components/MidiPlayer.jsx — midi-audio-player + GeneralUser GS + Karaoke
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import {
   Box, Typography, IconButton, Slider, Stack, CircularProgress,
-  Alert, Chip, Tooltip, Divider
+  Alert, Chip, Tooltip, Divider, FormControl, InputLabel, Select, MenuItem,
+  Switch, FormControlLabel, Paper
 } from '@mui/material';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import PauseIcon from '@mui/icons-material/Pause';
 import StopIcon from '@mui/icons-material/Stop';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
-import { Midi } from '@tonejs/midi';
-import * as Tone from 'tone';
+import MicIcon from '@mui/icons-material/Mic';
+import { MidiAudioPlayer } from 'midi-audio-player';
 
-// ---- Soundfont MusyngKite (qualità migliore di FluidR3) ----
-const SOUNDFONT_BASE = 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite';
+const SOUNDFONT_ENDPOINT = '/soundfonts/generaluser/';
+
+const EQ_PRESETS = [
+  { value: 'flat', label: 'Flat' },
+  { value: 'classical', label: 'Classical' },
+  { value: 'jazz', label: 'Jazz' },
+  { value: 'vocal', label: 'Vocal' },
+  { value: 'electronic', label: 'Electronic' },
+  { value: 'bass', label: 'Bass Boost' },
+  { value: 'treble', label: 'Treble Boost' },
+  { value: 'loudness', label: 'Loudness' },
+];
 
 export default function MidiPlayer({ contentUrl, fileName }) {
   const [loading, setLoading] = useState(true);
@@ -20,51 +31,140 @@ export default function MidiPlayer({ contentUrl, fileName }) {
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
-  const [tracks, setTracks] = useState([]);
-  const [volume, setVolume] = useState(-6);
+  const [volume, setVolume] = useState(0.7);
+  const [reverb, setReverb] = useState(0.25);
+  const [eqPreset, setEqPreset] = useState('flat');
   const [log, setLog] = useState([]);
+  const [ready, setReady] = useState(false);
 
-  const midiRef = useRef(null);
-  const synthsRef = useRef([]);
-  const partRef = useRef(null);
+  // Karaoke
+  const [karaokeEnabled, setKaraokeEnabled] = useState(false);
+  const [karaokeFrame, setKaraokeFrame] = useState('');
+  const [hasKaraoke, setHasKaraoke] = useState(false);
+
+  const playerRef = useRef(null);
   const rafRef = useRef(null);
-  const offsetRef = useRef(0);
-  const reverbRef = useRef(null);
-  const compressorRef = useRef(null);
+  const karaokeEnabledRef = useRef(karaokeEnabled);
 
-  const append = (msg) => {
+  useEffect(() => {
+    karaokeEnabledRef.current = karaokeEnabled;
+  }, [karaokeEnabled]);
+
+  const append = useCallback((msg) => {
     console.log('[MidiPlayer]', msg);
     const ts = new Date().toLocaleTimeString();
-    const important = /pronti|caricati|Playback|ERRORE|TIMEOUT|FALLITO|fallback|Reverb|Compressore/i.test(msg);
+    const important = /pronto|caricato|Playback|ERRORE|FALLITO|fine|ready|creato|karaoke/i.test(msg);
     setLog((l) => [...l, `${important ? '⭐' : '  '} [${ts}] ${msg}`]);
-  };
+  }, []);
 
-  // ---- 1. Carica e parsa il MIDI ----
+  // ============================================================
+  // 1. Inizializza il player
+  // ============================================================
   useEffect(() => {
+    let cancelled = false;
+
+    try {
+      append('Creo MidiAudioPlayer…');
+      const player = new MidiAudioPlayer({
+        endpoint: SOUNDFONT_ENDPOINT,
+        volume,
+        reverb,
+        eqPreset,
+        localCache: true,
+        karaoke: true,
+        muteExpression: false,
+      });
+
+      player.on('computed', (info) => {
+        if (cancelled) return;
+        append(`File: "${info.title || fileName}" — ${info.duration?.toFixed(1)}s`);
+        setDuration(info.duration || 0);
+        if (info.karaoke) {
+          setHasKaraoke(true);
+          append('Karaoke rilevato nel file');
+        }
+      });
+
+      player.on('presetsLoaded', () => {
+        if (cancelled) return;
+        append('Preset caricati');
+        setReady(true);
+      });
+
+      player.on('endOfFile', () => {
+        if (cancelled) return;
+        append('Fine file');
+        setPlaying(false);
+        setCurrentTime(0);
+        setKaraokeFrame('');
+      });
+
+      const handleKaraokeFrame = (frame) => {
+        if (!karaokeEnabledRef.current) return;
+        if (!frame) return;
+
+        let html = '';
+        if (typeof frame === 'string') html = frame;
+        else if (frame.html) html = frame.html;
+        else if (frame.text) html = frame.text;
+        else if (frame.type && frame.content) html = frame.content;
+
+        if (html) setKaraokeFrame(html);
+      };
+
+      player.on('karaoke', handleKaraokeFrame);
+      player.on('karaokeFrame', handleKaraokeFrame);
+      player.on('lyrics', handleKaraokeFrame);
+
+      player.on('logs', (msg) => {
+        console.log('[midi-audio-player]', msg);
+        if (typeof msg === 'string' && /karaoke|lyric/i.test(msg)) {
+          append(`[lib] ${msg}`);
+        }
+      });
+
+      playerRef.current = player;
+      append('MidiAudioPlayer creato');
+    } catch (e) {
+      console.error(e);
+      setError(e.message);
+      append(`ERRORE init: ${e.message}`);
+    }
+
+    return () => {
+      cancelled = true;
+      if (playerRef.current) {
+        try { playerRef.current.stop(); } catch (_) {}
+        try { playerRef.current.close(); } catch (_) {}
+        playerRef.current = null;
+      }
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ============================================================
+  // 2. Carica il file MIDI
+  // ============================================================
+  useEffect(() => {
+    if (!playerRef.current) return;
+    if (!contentUrl) return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setReady(false);
+    setHasKaraoke(false);
+    setKaraokeFrame('');
+    setKaraokeEnabled(false);
+
     append(`Carico ${contentUrl}`);
 
-    fetch(contentUrl)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.arrayBuffer();
-      })
-      .then((buffer) => {
+    playerRef.current
+      .load(contentUrl)
+      .then(() => {
         if (cancelled) return;
-        const midi = new Midi(buffer);
-        midiRef.current = midi;
-        setDuration(midi.duration);
-        const trks = midi.tracks.map((t, i) => ({
-          index: i,
-          name: t.name || `Traccia ${i + 1}`,
-          instrument: t.instrument?.name || 'acoustic_grand_piano',
-          noteCount: t.notes.length,
-          muted: false,
-        }));
-        setTracks(trks);
-        append(`MIDI parsato: ${midi.tracks.length} tracce, ${midi.duration.toFixed(1)}s`);
+        append('File caricato');
         setLoading(false);
       })
       .catch((e) => {
@@ -79,223 +179,120 @@ export default function MidiPlayer({ contentUrl, fileName }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contentUrl]);
 
-  // ---- 2. Crea reverb + compressore (una volta sola) ----
-  const ensureEffects = async () => {
-    if (reverbRef.current && compressorRef.current) return;
-
-    append('Creo reverb (2.5s, wet 25%)…');
-    reverbRef.current = new Tone.Reverb({ decay: 2.5, wet: 0.25 });
-    await reverbRef.current.generate();
-    append('Reverb pronto');
-
-    append('Creo compressore (threshold -12, ratio 3)…');
-    compressorRef.current = new Tone.Compressor(-12, 3).toDestination();
-    append('Compressore pronto');
-
-    // Catena: reverb → compressore → output
-    reverbRef.current.connect(compressorRef.current);
-  };
-
-  // ---- 3. Crea i synth (deduplicati) ----
-  const buildSynths = async () => {
-    const midi = midiRef.current;
-    if (!midi) return [];
-
-    await ensureEffects();
-
-    // Raccogli gli strumenti UNICI (sanificati per il CDN)
-    const instrumentMap = new Map();
-    const uniqueInstruments = new Set();
-    midi.tracks.forEach((track) => {
-      let instName = (track.instrument?.name || 'acoustic_grand_piano').replace(/\s+/g, '_');
-      instName = instName.replace(/[()]/g, '');
-      uniqueInstruments.add(instName);
-    });
-
-    append(`Strumenti unici da caricare: ${uniqueInstruments.size} (${[...uniqueInstruments].join(', ')})`);
-
-    // Fallback per strumenti problematici sul CDN
-    const FALLBACKS = {
-      'standard_kit': 'acoustic_grand_piano',
-      'electric_guitar_jazz': 'electric_guitar_clean',
-      'synthbrass_2': 'brass_section',
-    };
-
-    const loadPromises = [...uniqueInstruments].map((instName) => {
-      return new Promise((resolve) => {
-        const realName = FALLBACKS[instName] || instName;
-        append(`Carico soundfont: ${realName}${realName !== instName ? ` (fallback per ${instName})` : ''}`);
-
-        let done = false;
-        const finish = (synth) => {
-          if (done) return;
-          done = true;
-          instrumentMap.set(instName, synth);
-          resolve();
-        };
-
-        try {
-          const synth = new Tone.Sampler({
-            urls: { C4: `${SOUNDFONT_BASE}/${realName}-mp3/C4.mp3` },
-            baseUrl: '',
-            release: 1,
-            onload: () => {
-              append(`Soundfont pronto: ${realName}`);
-              finish(synth);
-            },
-            onerror: () => {
-              append(`⚠️ Soundfont FALLITO: ${realName}`);
-              finish(null);
-            },
-          }).connect(reverbRef.current); // ← passa dal reverb
-          synth.volume.value = volume;
-
-          setTimeout(() => {
-            if (!done) {
-              append(`⚠️ TIMEOUT soundfont: ${realName} (15s)`);
-              finish(synth);
-            }
-          }, 15000);
-        } catch (e) {
-          append(`⚠️ ERRORE sampler ${realName}: ${e.message}`);
-          finish(null);
-        }
-      });
-    });
-
-    await Promise.all(loadPromises);
-
-    const loaded = [...instrumentMap.values()].filter((s) => s !== null).length;
-    append(`Tutti i soundfont caricati (${loaded}/${uniqueInstruments.size} con successo)`);
-
-    const synths = midi.tracks.map((track) => {
-      let instName = (track.instrument?.name || 'acoustic_grand_piano').replace(/\s+/g, '_');
-      instName = instName.replace(/[()]/g, '');
-      return instrumentMap.get(instName) || null;
-    });
-
-    return synths;
-  };
-
-  // ---- 4. Play ----
-  const handlePlay = async () => {
-    if (!midiRef.current || playing) return;
-    try {
-      append('Play richiesto');
-      await Tone.start();
-      append(`Tone context state: ${Tone.getContext().state}`);
-      const midi = midiRef.current;
-
-      if (synthsRef.current.length === 0) {
-        append('Carico soundfont in corso… (attendi)');
-        synthsRef.current = await buildSynths();
-      }
-      const synths = synthsRef.current;
-
-      const events = [];
-      midi.tracks.forEach((track, ti) => {
-        if (tracks[ti]?.muted) return;
-        track.notes.forEach((n) => {
-          events.push({
-            time: n.time,
-            note: n.name,
-            duration: n.duration,
-            velocity: n.velocity,
-            trackIndex: ti,
-          });
-        });
-      });
-      events.sort((a, b) => a.time - b.time);
-      append(`Programmo ${events.length} note`);
-
-      const part = new Tone.Part((time, ev) => {
-        const s = synths[ev.trackIndex];
-        if (s) s.triggerAttackRelease(ev.note, ev.duration, time, ev.velocity);
-      }, events.map((e) => [e.time, e]));
-      part.start(0);
-      partRef.current = part;
-
-      const transport = Tone.getTransport();
-      transport.stop();
-      transport.seconds = offsetRef.current;
-      transport.start();
-      setPlaying(true);
-      append('Playback avviato');
-
-      const tick = () => {
-        const t = transport.seconds;
-        setCurrentTime(t);
-        if (t >= midi.duration) { handleStop(); return; }
-        rafRef.current = requestAnimationFrame(tick);
-      };
+  // ============================================================
+  // 3. RAF per posizione
+  // ============================================================
+  const startRaf = () => {
+    const tick = () => {
+      const player = playerRef.current;
+      if (!player) return;
+      const t = player.currentTime || 0;
+      setCurrentTime(t);
       rafRef.current = requestAnimationFrame(tick);
-    } catch (e) {
-      console.error(e);
-      append(`ERRORE play: ${e.message}`);
-      setError(e.message);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  };
+
+  const stopRaf = () => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
     }
   };
 
-  // ---- 5. Pause ----
-  const handlePause = () => {
-    const transport = Tone.getTransport();
-    offsetRef.current = transport.seconds;
-    transport.pause();
-    synthsRef.current.forEach((s) => { try { s.releaseAll(); } catch (_) {} });
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    setPlaying(false);
-    append('Pausa');
+  // ============================================================
+  // 4. Play/Pause
+  // ============================================================
+  const handlePlayPause = async () => {
+    const player = playerRef.current;
+    if (!player) return;
+
+    if (playing) {
+      await player.pause();
+      setPlaying(false);
+      stopRaf();
+      append('Pausa');
+    } else {
+      await player.play();
+      setPlaying(true);
+      startRaf();
+      append('Playback avviato');
+    }
   };
 
-  // ---- 6. Stop ----
-  const handleStop = () => {
-    const transport = Tone.getTransport();
-    transport.stop();
-    if (partRef.current) {
-      partRef.current.stop();
-      partRef.current.dispose();
-      partRef.current = null;
-    }
-    synthsRef.current.forEach((s) => { try { s.releaseAll(); } catch (_) {} });
-    offsetRef.current = 0;
+  // ============================================================
+  // 5. Stop
+  // ============================================================
+  const handleStop = async () => {
+    const player = playerRef.current;
+    if (!player) return;
+    await player.stop();
     setCurrentTime(0);
     setPlaying(false);
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    setKaraokeFrame('');
+    stopRaf();
     append('Stop');
   };
 
-  // ---- 7. Seek ----
-  const handleSeek = (_, value) => {
+  // ============================================================
+  // 6. Seek
+  // ============================================================
+  const handleSeek = async (_, value) => {
+    const player = playerRef.current;
+    if (!player) return;
     const t = typeof value === 'number' ? value : 0;
-    offsetRef.current = t;
     setCurrentTime(t);
-    if (playing) {
-      handleStop();
-      setTimeout(() => handlePlay(), 50);
+    if (player.skipToSeconds) {
+      try { await player.skipToSeconds(t); } catch (_) {}
     }
   };
 
-  // ---- 8. Volume ----
+  // ============================================================
+  // 7. Volume
+  // ============================================================
   const handleVolume = (_, value) => {
-    setVolume(value);
-    synthsRef.current.forEach((s) => {
-      try { s.volume.value = value; } catch (_) {}
-    });
+    const v = typeof value === 'number' ? value : 0.7;
+    setVolume(v);
+    if (playerRef.current) playerRef.current.volume = v;
   };
 
-  // ---- 9. Mute traccia ----
-  const toggleMute = (index) => {
-    setTracks((prev) => {
-      const next = prev.map((t) =>
-        t.index === index ? { ...t, muted: !t.muted } : t
-      );
-      const s = synthsRef.current[index];
-      if (s) s.mute = next.find((t) => t.index === index)?.muted ?? false;
-      return next;
-    });
+  // ============================================================
+  // 8. Reverb
+  // ============================================================
+  const handleReverb = (_, value) => {
+    const v = typeof value === 'number' ? value : 0.25;
+    setReverb(v);
+    if (playerRef.current) playerRef.current.reverb = v;
   };
 
-  // ---- 10. Formato tempo ----
+  // ============================================================
+  // 9. EQ
+  // ============================================================
+  const handleEqChange = (e) => {
+    const v = e.target.value;
+    setEqPreset(v);
+    if (playerRef.current && playerRef.current.setEQPreset) {
+      try { playerRef.current.setEQPreset(v); } catch (_) {}
+      append(`EQ: ${v}`);
+    }
+  };
+
+  // ============================================================
+  // 10. Toggle karaoke
+  // ============================================================
+  const handleToggleKaraoke = (e) => {
+    const enabled = e.target.checked;
+    setKaraokeEnabled(enabled);
+    if (!enabled) {
+      setKaraokeFrame('');
+    } else {
+      append('Karaoke attivato');
+    }
+  };
+
+  // ============================================================
+  // 11. Formato tempo
+  // ============================================================
   const fmt = (sec) => {
     if (!isFinite(sec)) return '0:00';
     const m = Math.floor(sec / 60);
@@ -303,20 +300,9 @@ export default function MidiPlayer({ contentUrl, fileName }) {
     return `${m}:${s}`;
   };
 
-  // ---- Cleanup ----
-  useEffect(() => {
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      if (partRef.current) { try { partRef.current.dispose(); } catch (_) {} }
-      synthsRef.current.forEach((s) => { try { s.dispose(); } catch (_) {} });
-      if (reverbRef.current) { try { reverbRef.current.dispose(); } catch (_) {} }
-      if (compressorRef.current) { try { compressorRef.current.dispose(); } catch (_) {} }
-      Tone.getTransport().stop();
-      Tone.getTransport().cancel();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  // ============================================================
+  // RENDER
+  // ============================================================
   return (
     <Box sx={{ p: 3, maxWidth: 900, mx: 'auto', width: '100%' }}>
       <Typography variant="h6" sx={{ color: 'white', mb: 1 }} noWrap>
@@ -336,9 +322,10 @@ export default function MidiPlayer({ contentUrl, fileName }) {
 
       {!loading && !error && (
         <>
+          {/* Barra principale */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
             <IconButton
-              onClick={playing ? handlePause : handlePlay}
+              onClick={handlePlayPause}
               sx={{
                 backgroundColor: '#673ab7', color: 'white',
                 '&:hover': { backgroundColor: '#5e35b1' },
@@ -368,78 +355,184 @@ export default function MidiPlayer({ contentUrl, fileName }) {
             <Typography sx={{ color: 'white', fontSize: 13, minWidth: 40 }}>
               {fmt(duration)}
             </Typography>
-
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 140 }}>
-              <VolumeUpIcon sx={{ color: 'rgba(255,255,255,0.6)' }} />
-              <Slider
-                value={volume}
-                min={-40}
-                max={6}
-                step={1}
-                onChange={handleVolume}
-                sx={{ color: '#9575cd', width: 90 }}
-              />
-            </Stack>
           </Box>
 
           <Divider sx={{ borderColor: 'rgba(255,255,255,0.12)', my: 2 }} />
 
-          <Typography variant="subtitle2" sx={{ color: 'rgba(255,255,255,0.7)', mb: 1 }}>
-            Tracce ({tracks.length})
-          </Typography>
-          <Box
-            sx={{
-              maxHeight: 200, overflowY: 'auto',
-              backgroundColor: 'rgba(255,255,255,0.04)',
-              borderRadius: 1, p: 1, mb: 2,
-            }}
+          {/* Controlli audio */}
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            sx={{ mb: 2, flexWrap: 'wrap', alignItems: 'center' }}
           >
-            {tracks.map((t) => (
-              <Box
-                key={t.index}
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 200 }}>
+              <VolumeUpIcon sx={{ color: 'rgba(255,255,255,0.6)' }} />
+              <Slider
+                value={volume}
+                min={0}
+                max={1}
+                step={0.05}
+                onChange={handleVolume}
+                sx={{ color: '#9575cd', width: 120 }}
+              />
+              <Typography sx={{ color: 'white', fontSize: 11, minWidth: 30 }}>
+                {Math.round(volume * 100)}%
+              </Typography>
+            </Stack>
+
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 200 }}>
+              <Typography sx={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>
+                Riverbero
+              </Typography>
+              <Slider
+                value={reverb}
+                min={0}
+                max={1}
+                step={0.05}
+                onChange={handleReverb}
+                sx={{ color: '#9575cd', width: 120 }}
+              />
+              <Typography sx={{ color: 'white', fontSize: 11, minWidth: 30 }}>
+                {Math.round(reverb * 100)}%
+              </Typography>
+            </Stack>
+
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel id="eq-label" sx={{ color: 'rgba(255,255,255,0.9)' }}>
+                EQ
+              </InputLabel>
+              <Select
+                labelId="eq-label"
+                label="EQ"
+                value={eqPreset}
+                onChange={handleEqChange}
                 sx={{
-                  display: 'flex', alignItems: 'center', gap: 1,
-                  py: 0.5, px: 1, opacity: t.muted ? 0.4 : 1,
+                  color: 'white',
+                  backgroundColor: 'rgba(255,255,255,0.08)',
+                  '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.4)' },
+                  '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(255,255,255,0.7)' },
+                  '& .MuiSvgIcon-root': { color: 'white' },
                 }}
               >
-                <Chip
-                  label={t.index + 1}
-                  size="small"
-                  sx={{ backgroundColor: 'rgba(149,117,205,0.4)', color: 'white', height: 20, minWidth: 24 }}
-                />
-                <Typography sx={{ color: 'white', fontSize: 13, flex: 1 }} noWrap>
-                  {t.name}
-                </Typography>
-                <Typography sx={{ color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
-                  {t.instrument} · {t.noteCount} note
-                </Typography>
-                <Tooltip title={t.muted ? 'Attiva' : 'Silenzia'}>
-                  <IconButton
-                    size="small"
-                    onClick={() => toggleMute(t.index)}
-                    sx={{ color: t.muted ? '#ef5350' : 'rgba(255,255,255,0.7)' }}
-                  >
-                    {t.muted ? '🔇' : '🔊'}
-                  </IconButton>
-                </Tooltip>
-              </Box>
-            ))}
-          </Box>
+                {EQ_PRESETS.map((p) => (
+                  <MenuItem key={p.value} value={p.value}>
+                    {p.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
 
-          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.4)', display: 'block', mb: 1 }}>
-            Soundfont: MusyngKite + Reverb 2.5s + Compressore. Il primo play carica i campioni (qualche secondo), i successivi sono istantanei.
+            {/* Toggle karaoke */}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={karaokeEnabled}
+                  onChange={handleToggleKaraoke}
+                  sx={{
+                    '& .MuiSwitch-switchBase.Mui-checked': { color: '#ce93d8' },
+                    '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+                      backgroundColor: '#9575cd',
+                    },
+                  }}
+                />
+              }
+              label={
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <MicIcon sx={{ color: karaokeEnabled ? '#ce93d8' : 'rgba(255,255,255,0.5)', fontSize: 18 }} />
+                  <Typography sx={{ color: 'white', fontSize: 13 }}>
+                    Karaoke
+                  </Typography>
+                  {hasKaraoke && (
+                    <Chip
+                      label="presente"
+                      size="small"
+                      sx={{
+                        height: 16,
+                        fontSize: 9,
+                        color: 'white',
+                        backgroundColor: 'rgba(100,181,246,0.6)',
+                      }}
+                    />
+                  )}
+                </Stack>
+              }
+            />
+          </Stack>
+
+          {/* 🔥 Box karaoke: sfondo blu, testo bianco */}
+          {karaokeEnabled && (
+            <Paper
+              sx={{
+                mt: 2,
+                mb: 2,
+                p: 3,
+                minHeight: 100,
+                backgroundColor: '#0D47A1',          // blu scuro
+                border: '2px solid #1976d2',         // blu MUI primary
+                borderRadius: 2,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                textAlign: 'center',
+                boxShadow: '0 4px 20px rgba(25,118,210,0.4)',
+              }}
+            >
+              {karaokeFrame ? (
+                <Box
+                  sx={{
+                    color: '#FFFFFF',                 // testo bianco
+                    fontSize: 22,
+                    fontWeight: 600,
+                    lineHeight: 1.7,
+                    fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+                    '& .karaoke-played': {
+                      color: 'rgba(255,255,255,0.45)',   // bianco sbiadito (già cantato)
+                    },
+                    '& .karaoke-playing': {
+                      color: '#FFEB3B',                  // giallo acceso (sillaba corrente)
+                      backgroundColor: 'rgba(255,235,59,0.15)',
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      textShadow: '0 0 12px rgba(255,235,59,0.6)',
+                    },
+                    '& .karaoke-coming': {
+                      color: '#FFFFFF',                  // bianco pieno (futuro)
+                    },
+                  }}
+                  dangerouslySetInnerHTML={{ __html: karaokeFrame }}
+                />
+              ) : (
+                <Typography
+                  variant="body2"
+                  sx={{
+                    color: 'rgba(255,255,255,0.6)',
+                    fontStyle: 'italic',
+                    fontSize: 14,
+                  }}
+                >
+                  {hasKaraoke
+                    ? 'Premi ▶ per iniziare — il testo apparirà qui sincronizzato'
+                    : 'Nessun testo karaoke trovato in questo file'}
+                </Typography>
+              )}
+            </Paper>
+          )}
+
+          <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.4)', display: 'block', mt: 2, mb: 1 }}>
+            Motore: midi-audio-player + GeneralUser GS. Riverbero convolutivo + EQ 10 bande + caching IndexedDB.
           </Typography>
 
-          <details style={{ marginTop: 16 }} open>
+          {/* 🔥 Log diagnostico chiuso di default, apribile a richiesta */}
+          <details style={{ marginTop: 16 }}>
             <summary style={{ color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontSize: 12 }}>
-              Log diagnostico ({log.length})
+              🩺 Log diagnostico ({log.length}) — clicca per aprire
             </summary>
             <Box
               component="pre"
               sx={{
                 backgroundColor: '#111', color: '#0f0',
                 p: 2, borderRadius: 1, fontSize: 11,
-                fontFamily: 'monospace', maxHeight: 400,
+                fontFamily: 'monospace', maxHeight: 300,
                 overflowY: 'auto', whiteSpace: 'pre-wrap', mt: 1,
               }}
             >

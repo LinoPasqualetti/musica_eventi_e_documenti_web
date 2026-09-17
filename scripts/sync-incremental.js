@@ -1,14 +1,11 @@
+// [MODIFICA] C:\musica_eventi_e_documenti_web\scripts\sync-incremental.js
+
 const sqlite3 = require('sqlite3').verbose();
 const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
 
-// Carica le variabili d'ambiente dal backend. Percorso ASSOLUTO rispetto a
-// questo file (non alla cartella da cui lanci il comando): con un percorso
-// relativo tipo '../backend/.env', se lo script viene eseguito da una
-// cartella diversa da scripts/ il file .env non viene trovato e si cade
-// silenziosamente sui valori di default — incluso il segnaposto
-// 'TUO_NOME_UTENTE' che non esiste su nessuna macchina reale.
+// Carica le variabili d'ambiente dal backend.
 const envPath = path.resolve(__dirname, '../backend/.env');
 const envResult = dotenv.config({ path: envPath });
 
@@ -69,12 +66,7 @@ function saveLastSyncTime(timestamp) {
   fs.writeFileSync(LAST_SYNC_FILE, JSON.stringify({ lastSync: timestamp }, null, 2));
 }
 
-// Allinea lo schema della tabella copia a quello del sorgente: aggiunge le
-// colonne mancanti (es. storage_mode/content/mime_type appena introdotte su
-// documents). Prima d'ora la sincronizzazione clonava lo schema SOLO se la
-// tabella non esisteva affatto nella copia, quindi una tabella già presente
-// da sync precedenti non riceveva mai le nuove colonne — e la INSERT
-// dinamica su quelle colonne avrebbe fallito con "no such column".
+// Allinea lo schema della tabella copia a quello del sorgente
 async function reconcileSchema(sourceDb, targetDb, tableName) {
   const sourceColumns = await new Promise((resolve, reject) => {
     sourceDb.all(`PRAGMA table_info(${tableName})`, (err, rows) => {
@@ -123,42 +115,29 @@ async function syncTables() {
 
   try {
     // Lista delle tabelle da sincronizzare
-// NOTA: 'users' e 'registrations' sono state rimosse.
-// Sono tabelle BIDIREZIONALI: il web le scrive (utenti si iscrivono, admin
-// valida sul web) e il desktop le modifica (admin valida sul desktop).
-// Copiarle con questa sync rischierebbe di sovrascrivere dati web con dati
-// desktop non ancora sincronizzati via HTTP (vedi WebSyncService).
-// La sincronizzazione di queste tabelle avviene SOLO via API HTTP:
-//   - GET  /api/registrations?status=pending  (pull)
-//   - POST /api/registrations/mark-exported   (post-pull)
-//   - PUT  /api/registrations/:id/status      (push)
-const tables = [
-  // 'users',            // rimossa - bidirezionale
-  'songs',
-  'events',
-  'documents',
-  'event_songs',
-  'song_documents',
-  'event_song_documents',
-  // 'registrations',    // rimossa - bidirezionale
-  'event_assignments',
-  'instrument_parts',
-  'musical_documents',
-  'song_infos'
-];
+    // NOTA: 'users' e 'registrations' sono state rimosse.
+    // Sono tabelle BIDIREZIONALI.
+    const tables = [
+      // 'users',            // rimossa - bidirezionale
+      'songs',
+      'events',
+      'documents',
+      'event_songs',
+      'song_documents',
+      'event_song_documents',
+      // 'registrations',    // rimossa - bidirezionale
+      'event_assignments',
+      'instrument_parts',
+      'musical_documents',
+      'song_infos'
+    ];
 
     let totalRecords = 0;
-
     const tableErrors = [];
 
     for (const tableName of tables) {
       console.log(`🔄 Sincronizzazione: ${tableName}`);
 
-      // Ogni tabella è isolata: se una fallisce (es. una colonna con un tipo
-      // inatteso, un vincolo che non torna), le altre vengono comunque
-      // processate invece che interrompere l'intero script a metà — prima
-      // un errore su una tabella qualsiasi bloccava silenziosamente anche
-      // tutte quelle successive nell'elenco.
       try {
         // Prima controlla se la tabella esiste nel database copia
         const tableExists = await new Promise((resolve, reject) => {
@@ -193,18 +172,11 @@ const tables = [
             );
           });
         } else {
-          // La tabella esiste già: allinea lo schema aggiungendo le colonne
-          // eventualmente comparse nel sorgente da quando fu creata qui.
+          // La tabella esiste già: allinea lo schema
           await reconcileSchema(sourceDb, targetDb, tableName);
         }
 
-        // Se la copia è vuota per questa tabella (appena creata, svuotata,
-        // o un sync precedente interrotto prima di arrivarci), il filtro
-        // incrementale lascerebbe fuori tutto lo storico: last_sync.json
-        // continua a riportare la data dell'ultima sincronizzazione
-        // riuscita, indipendentemente da quanti dati sono davvero rimasti
-        // sulla copia. In quel caso sincronizziamo tutti i record, non solo
-        // quelli più recenti di lastSync.
+        // Se la copia è vuota per questa tabella, sincronizziamo tutto lo storico.
         const targetRowCount = await new Promise((resolve, reject) => {
           targetDb.get(`SELECT COUNT(*) AS c FROM ${tableName}`, (err, row) => {
             if (err) return reject(err);
@@ -216,8 +188,7 @@ const tables = [
           console.log(`   ℹ️  Copia vuota per questa tabella: sincronizzo tutto lo storico`);
         }
 
-        // Leggi i dati dal sorgente: tutto lo storico se la copia è vuota,
-        // altrimenti solo le modifiche più recenti dell'ultima sincronizzazione.
+        // Leggi i dati dal sorgente
         const sourceData = await new Promise((resolve, reject) => {
           if (needsFullSync) {
             sourceDb.all(`SELECT * FROM ${tableName}`, (err, rows) => {
@@ -244,7 +215,7 @@ const tables = [
 
         console.log(`   📝 ${sourceData.length} record da sincronizzare`);
 
-        // Ottieni le colonne della tabella (ora sicuramente allineate)
+        // Ottieni le colonne della tabella
         const columns = await new Promise((resolve, reject) => {
           sourceDb.all(`PRAGMA table_info(${tableName})`, (err, rows) => {
             if (err) return reject(err);
@@ -265,21 +236,32 @@ const tables = [
             .filter(col => col !== 'id')
             .map(col => row[col]);
 
-          // Per alcune tabelle il conflict su `id` non basta: `song_documents` ha
-          // anche UNIQUE(document_id, song_id), `event_songs` ha UNIQUE(event_id,
-          // song_id), ecc. Se una riga con id diverso ma stessa coppia esiste,
-          // ON CONFLICT(id) non scatta e l'INSERT fallisce con UNIQUE constraint.
-          const conflictTargets = {
-            'song_documents': 'id, document_id, song_id',
-            'event_songs': 'id, event_id, song_id',
-            'event_song_documents': 'id, event_song_id, document_id',
+          // Tabelle con UNIQUE(composite): cancella prima l'eventuale riga
+          // con la stessa coppia di FK (id diverso).
+          const compositeKeyMap = {
+            'song_documents': ['document_id', 'song_id'],
+            'event_songs': ['event_id', 'song_id'],
+            'event_song_documents': ['event_song_id', 'document_id']
           };
 
-          const conflictTarget = conflictTargets[tableName] || 'id';
+          if (compositeKeyMap[tableName]) {
+            const keys = compositeKeyMap[tableName];
+            const whereClause = keys.map(k => `${k} = ?`).join(' AND ');
+            const whereValues = keys.map(k => row[k]);
+
+            await new Promise((resolve, reject) => {
+              targetDb.run(
+                `DELETE FROM ${tableName} WHERE ${whereClause}`,
+                whereValues,
+                (err) => err ? reject(err) : resolve()
+              );
+            });
+          }
+
           const query = `
             INSERT INTO ${tableName} (${columns.join(', ')})
             VALUES (${placeholders})
-            ON CONFLICT(${conflictTarget}) DO UPDATE SET ${updateClause}
+            ON CONFLICT(id) DO UPDATE SET ${updateClause}
           `;
 
           await new Promise((resolve, reject) => {
@@ -299,13 +281,102 @@ const tables = [
       }
     }
 
-    // Sincronizza anche le VISTE (v_event_full, v_event_songs,
-    // v_event_documents, ecc.): finora venivano sincronizzate solo le
-    // tabelle, mai le viste — su una copia web creata/aggiornata da questo
-    // script le viste non sono mai esistite, causando "no such table:
-    // v_event_full" (SQLite tratta le viste mancanti con lo stesso errore
-    // delle tabelle mancanti). Le ricreiamo sempre (DROP + CREATE) per
-    // restare allineati a qualunque modifica alla loro definizione.
+    // ============================================================
+    // FASE DI PULIZIA: cancella dal DB web i record rimossi dal desktop
+    // ============================================================
+    // Solo per tabelle "desktop-first". NON tocca tabelle bidirezionali
+    // (registrations, users) né tabelle web-first (user_feedback, ecc.).
+    //
+    // Ordine di cancellazione (dipendenze):
+    // 1. Tabelle di associazione (contengono FK verso le principali)
+    // 2. Tabelle principali
+    console.log('');
+    console.log('🧹 FASE DI PULIZIA (cancellazione record orfani)...');
+
+    const cleanupTables = [
+      { table: 'event_song_documents', keyColumn: 'id' },
+      { table: 'song_documents', keyColumn: 'id' },
+      { table: 'event_songs', keyColumn: 'id' },
+      { table: 'event_assignments', keyColumn: 'id' },
+      { table: 'instrument_parts', keyColumn: 'id' },
+      { table: 'musical_documents', keyColumn: 'id' },
+      { table: 'song_infos', keyColumn: 'id' },
+      { table: 'documents', keyColumn: 'id' },
+      { table: 'events', keyColumn: 'id' },
+      { table: 'songs', keyColumn: 'id' },
+    ];
+
+    let totalDeleted = 0;
+
+    for (const { table, keyColumn } of cleanupTables) {
+      try {
+        // 1. Verifica che la tabella esista nel DB web
+        const tableExists = await new Promise((resolve, reject) => {
+          targetDb.get(
+            `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+            [table],
+            (err, row) => err ? reject(err) : resolve(!!row)
+          );
+        });
+
+        if (!tableExists) {
+          continue;
+        }
+
+        // 2. Prendi tutti gli id presenti nel DB desktop
+        const sourceIds = await new Promise((resolve, reject) => {
+          sourceDb.all(`SELECT ${keyColumn} FROM ${table}`, (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows.map(r => r[keyColumn]));
+          });
+        });
+
+        // 3. Prendi tutti gli id presenti nel DB web
+        const targetIds = await new Promise((resolve, reject) => {
+          targetDb.all(`SELECT ${keyColumn} FROM ${table}`, (err, rows) => {
+            if (err) return reject(err);
+            resolve(rows.map(r => r[keyColumn]));
+          });
+        });
+
+        // 4. Trova gli id presenti nel web ma non nel desktop (orfani)
+        const sourceSet = new Set(sourceIds);
+        const orphans = targetIds.filter(id => !sourceSet.has(id));
+
+        if (orphans.length === 0) {
+          console.log(`   ✅ ${table}: nessun orfano`);
+          continue;
+        }
+
+        // 5. Cancella gli orfani
+        const placeholders = orphans.map(() => '?').join(', ');
+        const deleteResult = await new Promise((resolve, reject) => {
+          targetDb.run(
+            `DELETE FROM ${table} WHERE ${keyColumn} IN (${placeholders})`,
+            orphans,
+            function(err) {
+              if (err) return reject(err);
+              resolve(this.changes);
+            }
+          );
+        });
+
+        totalDeleted += deleteResult;
+        console.log(`   🗑️  ${table}: ${deleteResult} record orfani cancellati`);
+      } catch (cleanupError) {
+        console.error(`   ❌ Errore pulizia ${table}: ${cleanupError.message}`);
+        tableErrors.push({ tableName: `cleanup ${table}`, message: cleanupError.message });
+      }
+    }
+
+    if (totalDeleted > 0) {
+      console.log(`🧹 Pulizia completata: ${totalDeleted} record orfani rimossi`);
+    } else {
+      console.log('🧹 Pulizia completata: nessun orfano trovato');
+    }
+
+    // Sincronizza le VISTE
+    console.log('');
     console.log('🔄 Sincronizzazione viste...');
     const sourceViews = await new Promise((resolve, reject) => {
       sourceDb.all(`SELECT name, sql FROM sqlite_master WHERE type='view'`, (err, rows) => {
@@ -335,19 +406,17 @@ const tables = [
       }
     }
 
-// Salva il timestamp SOLO se non ci sono stati errori.
-// Altrimenti, al prossimo sync i record mancanti verranno ritentati
-// (perché updated_at sarà ancora > lastSync).
-if (tableErrors.length === 0) {
-  const newTimestamp = new Date().toISOString();
-  saveLastSyncTime(newTimestamp);
-  console.log('');
-  console.log(`📅 Nuovo timestamp: ${newTimestamp}`);
-} else {
-  console.log('');
-  console.log('⚠️  lastSync NON aggiornato per permettere il retry dei record falliti');
-}
+    // Salva il timestamp SOLO se non ci sono stati errori.
+    console.log('');
+    if (tableErrors.length === 0) {
+      const newTimestamp = new Date().toISOString();
+      saveLastSyncTime(newTimestamp);
+      console.log(`📅 Nuovo timestamp: ${newTimestamp}`);
+    } else {
+      console.log('⚠️  lastSync NON aggiornato: i record falliti verranno ritentati');
+    }
 
+    // Riepilogo finale
     console.log('');
     console.log('✅ SINCRONIZZAZIONE COMPLETATA!');
     if (tableErrors.length > 0) {
@@ -356,7 +425,7 @@ if (tableErrors.length === 0) {
       tableErrors.forEach(e => console.log(`   - ${e.tableName}: ${e.message}`));
     }
     console.log(`📊 Record aggiornati: ${totalRecords}`);
-    console.log(`📅 Nuovo timestamp: ${newTimestamp}`);
+    console.log(`🗑️  Record cancellati: ${totalDeleted}`);
     console.log('');
     console.log(`📂 Database copia: ${TARGET_DB_PATH}`);
 

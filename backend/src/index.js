@@ -46,7 +46,7 @@ const eventsRoutes = require('./routes/events');
 const documentsRoutes = require('./routes/documents');
 const registrationsRoutes = require('./routes/registrations');
 const mxlTempRoutes = require('./routes/mxlTemp');
-const abcTempRoutes = require('./routes/abcTemp');           // <<< NUOVO
+const abcTempRoutes = require('./routes/abcTemp');
 
 // ============================================
 // INIZIALIZZAZIONE APP
@@ -81,8 +81,6 @@ app.use(compression());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Static files
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 // ============================================
 // FRONTEND STATICO (build React/Vite)
 // ============================================
@@ -91,7 +89,12 @@ app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 //   - development: backend/data/uploads/
 //   - production:  /data/uploads/
 app.use('/uploads', express.static(UPLOADS_DIR));
-//app.use(express.static(path.join(__dirname, '../../frontend/dist')));
+
+// Serve i file statici del frontend buildato (JS, CSS, SVG, ecc.)
+app.use(express.static(path.join(__dirname, '../../frontend/dist')));
+
+// SoundFont per midi-audio-player
+app.use('/soundfonts', express.static(path.join(__dirname, '../public/soundfonts')));
 
 // ============================================
 // MIDDLEWARE PERSONALIZZATI
@@ -100,7 +103,6 @@ app.use('/uploads', express.static(UPLOADS_DIR));
 // 1. Correlation ID + Performance
 app.use(correlationIdMiddleware);
 app.use(performanceMiddleware);
-
 
 // 2. Logging delle richieste (solo in sviluppo)
 if (process.env.NODE_ENV !== 'production') {
@@ -146,17 +148,33 @@ app.use('/api/songs', songsRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/documents', documentsRoutes);
 app.use('/api/registrations', registrationsRoutes);
-// ─── AGGIUNGI SUBITO DOPO ───
 app.use('/api/abc-temp', abcTempRoutes);
 app.use('/api/mxl-temp', mxlTempRoutes);
+
+// 🔥 FIX 1: Forza UTF-8 SOLO sulle risposte API (non su SPA/statici)
+// Il vecchio middleware applicava application/json a TUTTE le richieste,
+// rompendo il Content-Type delle pagine HTML servite dal SPA fallback.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  }
+  next();
+});
+
 // ============================================
 // SPA FALLBACK (React Router)
 // Tutte le route non-API vengono servite da index.html
 // ============================================
-app.get(/^\/(?!api|uploads).*/, (req, res, next) => {
-  res.sendFile(path.join(__dirname, '../../frontend/dist/index.html'), (err) => {
-    if (err) next();
-  });
+// 🔥 FIX 2: res.type('html') imposta esplicitamente Content-Type: text/html
+// Senza questo, con X-Content-Type-Options: nosniff (da helmet),
+// Chrome interpreta l'HTML come XML e mostra "Formatta il codice".
+app.get(/^\/(?!api|uploads|soundfonts).*/, (req, res, next) => {
+  res.type('html').sendFile(
+    path.join(__dirname, '../../frontend/dist/index.html'),
+    (err) => {
+      if (err) next();
+    }
+  );
 });
 
 // ============================================

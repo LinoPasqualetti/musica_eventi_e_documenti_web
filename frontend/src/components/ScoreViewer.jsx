@@ -1,4 +1,4 @@
-// src/components/ScoreViewer.jsx — ABC + MXL con scrolling, battute/riga e Fix 1
+// src/components/ScoreViewer.jsx — ABC + MXL con menu tonalità esteso (scala completa)
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   Box, Typography, CircularProgress, Alert, Button, Stack,
@@ -28,7 +28,21 @@ const INSTRUMENTS = [
   { label: 'Corno in Fa', value: 7 },
 ];
 
-// 🔥 Stile CSS per forzare nero + evidenziazione nota
+// 🔥 Opzioni tonalità: scala cromatica completa da -24 a +24 semitoni
+// Etichette speciali per le ottave (12, 24) e per il valore originale (0)
+const TRANSPOSE_OPTIONS = Array.from({ length: 49 }, (_, i) => i - 24);
+// Genera: [-24, -23, -22, ..., -1, 0, 1, ..., 23, 24]
+
+function labelTranspose(n) {
+  if (n === 0) return 'Originale (0)';
+  if (n === 12) return '+1 ottava (+12)';
+  if (n === -12) return '−1 ottava (−12)';
+  if (n === 24) return '+2 ottave (+24)';
+  if (n === -24) return '−2 ottave (−24)';
+  return n > 0 ? `+${n} semitoni` : `${n} semitoni`;
+}
+
+// ---- Stile CSS per forzare nero + evidenziazione nota ----
 const SVG_FORCE_BLACK = {
   '& svg': { maxWidth: '100%', height: 'auto', display: 'block' },
   '& svg path': { fill: 'black', stroke: 'black' },
@@ -109,11 +123,18 @@ function parseTuneMeta(abcText) {
 async function extractMusicXmlFromMxl(arrayBuffer) {
   const zip = await JSZip.loadAsync(arrayBuffer);
   let xmlPath = null;
+  const decodeXmlEntities = (str) =>
+    str.replace(/&amp;/g, '&')
+       .replace(/&lt;/g, '<')
+       .replace(/&gt;/g, '>')
+       .replace(/&quot;/g, '"')
+       .replace(/&apos;/g, "'");
+
   const containerFile = zip.file('META-INF/container.xml');
   if (containerFile) {
     const containerXml = await containerFile.async('string');
     const m = containerXml.match(/full-path="([^"]+)"/i);
-    if (m) xmlPath = m[1];
+    if (m) xmlPath = decodeXmlEntities(m[1]);
   }
   if (!xmlPath) {
     const xmlFiles = Object.keys(zip.files).filter(
@@ -251,7 +272,7 @@ export default function ScoreViewer({ contentUrl, fileName, fallbackTitle }) {
   }, [contentUrl, fileName, kind]);
 
   // ============================================================
-  // FASE 2 — RENDER con abcjs + Fix 1 (container fresco)
+  // FASE 2 — RENDER con abcjs
   // ============================================================
   useEffect(() => {
     if (engine !== 'abc') return;
@@ -273,8 +294,7 @@ export default function ScoreViewer({ contentUrl, fileName, fallbackTitle }) {
     }
 
     try {
-      // 🔥 FIX 1: reset completo del container con nodo nuovo
-      // (abcjs altrimenti riusa le opzioni del primo render)
+      // FIX 1: reset completo del container con nodo nuovo
       paperRef.current.innerHTML = '';
       const freshInner = document.createElement('div');
       freshInner.style.minHeight = '300px';
@@ -297,7 +317,6 @@ export default function ScoreViewer({ contentUrl, fileName, fallbackTitle }) {
         paddingright: 0,
       };
 
-      // 🔥 renderAbc riceve il nodo nuovo
       const visualObjs = abcjs.renderAbc(freshInner, effectiveAbc, renderOptions);
       append(`AbcRenderer OK (${visualObjs.length} tune, visual ${finalVisualTranspose}, midi ${finalMidiTranspose}, zoom ${zoom}, battute/riga ${measuresPerLine})`);
 
@@ -633,7 +652,8 @@ export default function ScoreViewer({ contentUrl, fileName, fallbackTitle }) {
               </Box>
 
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-                <FormControl size="small" sx={{ minWidth: 180, flex: '1 1 180px' }}>
+                {/* 🔥 MENU TONALITÀ CON SCALA COMPLETA -24..+24 */}
+                <FormControl size="small" sx={{ minWidth: 200, flex: '1 1 200px' }}>
                   <InputLabel id="transpose-label" sx={{ color: 'rgba(255,255,255,0.9)' }}>
                     Tonalità (spartito + audio)
                   </InputLabel>
@@ -650,9 +670,9 @@ export default function ScoreViewer({ contentUrl, fileName, fallbackTitle }) {
                       '& .MuiSvgIcon-root': { color: 'white' },
                     }}
                   >
-                    {[-6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6].map((n) => (
+                    {TRANSPOSE_OPTIONS.map((n) => (
                       <MenuItem key={n} value={n}>
-                        {n === 0 ? 'Originale (0)' : n > 0 ? `+${n} semitoni` : `${n} semitoni`}
+                        {labelTranspose(n)}
                       </MenuItem>
                     ))}
                   </Select>
@@ -777,7 +797,13 @@ export default function ScoreViewer({ contentUrl, fileName, fallbackTitle }) {
               <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: 'wrap' }}>
                 {transpose !== 0 && (
                   <Chip
-                    label={`Tonalità ${transpose > 0 ? '+' : ''}${transpose}`}
+                    label={
+                      transpose === 12 ? 'Tonalità +1 ottava'
+                      : transpose === -12 ? 'Tonalità −1 ottava'
+                      : transpose === 24 ? 'Tonalità +2 ottave'
+                      : transpose === -24 ? 'Tonalità −2 ottave'
+                      : `Tonalità ${transpose > 0 ? '+' : ''}${transpose}`
+                    }
                     size="small"
                     sx={{ color: 'white', backgroundColor: 'rgba(100,181,246,0.5)', fontWeight: 600 }}
                   />
@@ -812,7 +838,7 @@ export default function ScoreViewer({ contentUrl, fileName, fallbackTitle }) {
               />
             </Paper>
 
-            {/* ---- AREA SPARTITO (con scroll container) ---- */}
+            {/* ---- AREA SPARTITO ---- */}
             <Box
               ref={scrollContainerRef}
               sx={{

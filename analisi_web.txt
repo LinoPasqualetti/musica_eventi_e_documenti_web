@@ -1,7 +1,7 @@
 ﻿============================================================
 ANALISI APP WEB (FRONTEND + BACKEND) - v3.0
 Cartella : C:\musica_eventi_e_documenti_web
-Data     : 2026-09-12 17:16:36
+Data     : 2026-09-15 17:28:19
 ============================================================
 
 ========== STATO MIGRAZIONE TURSO ==========
@@ -20,7 +20,9 @@ STATO: Turso ATTIVO nel codice.
 
 ========== STRUTTURA CARTELLE (max 4 livelli) ==========
 .\backend
+.\backend\backend
 .\backend\data
+.\backend\data\uploads
 .\backend\logs
 .\backend\public
 .\backend\public\tools
@@ -47,9 +49,9 @@ STATO: Turso ATTIVO nel codice.
 
 ========== SUDDIVISIONE FRONTEND / BACKEND ==========
 ----- FRONTEND: C:\musica_eventi_e_documenti_web\frontend -----
-File: 28  |  Size: 0,29 MB
+File: 30  |  Size: 0,3 MB
 Estensioni principali:
-  .jsx          14
+  .jsx          16
   .svg           4
   .json          3
   .js            3
@@ -58,46 +60,59 @@ Estensioni principali:
   .md            1
 
 ----- BACKEND: C:\musica_eventi_e_documenti_web\backend -----
-File: 55  |  Size: 80,44 MB
+File: 73  |  Size: 124,79 MB
 Estensioni principali:
-  .js           26
+  .js           36
   .mxl           5
   .db            4
-  .kar           3
+  .log           3
+  .mp3           3
   .json          3
+  .kar           3
   .pdf           2
-  .log           2
-  .mp3           1
-  .html          1
-  .abc           1
+  .pre-blob-fix     1
+  .pre-status-fix     1
 
 ========== ELENCO FILE (percorso) ==========
+.\.dockerignore
+.\backend\.dockerignore
+.\backend\backend\test-turso-semplice.js
 .\backend\data\backup_pre_turso.db
 .\backend\data\musica_eventi_e_documenti_web.db
 .\backend\data\musica_eventi_e_documenti_web.db.2026-08-25 backup
 .\backend\data\musica_eventi_e_documenti_web.db.2026-09-10
 .\backend\data\musica_eventi_e_documenti_web.db.attuale
 .\backend\data\musica_eventi_e_documenti_web.db.bis
+.\backend\data\musica_eventi_e_documenti_web.db.pre-blob-fix
+.\backend\data\musica_eventi_e_documenti_web.db.pre-status-fix
 .\backend\data\musica_eventi_e_documenti_web.db-info
 .\backend\data\musica_eventi_e_documenti_web.db-shm
 .\backend\data\musica_eventi_e_documenti_web.db-wal
 .\backend\data\musica_eventi_e_documenti_web_pre_turso.db
 .\backend\data\musica_eventi_e_documenti_webold2026-08-29.db
+.\backend\data\uploads\1786531057938_02_-_Con_le_mani.mp3
+.\backend\data\uploads\1788498595702_09_-_The_Beatles_-_When_I_m_Sixty-Four.mp3
+.\backend\Dockerfile
 .\backend\drop-documents.js
 .\backend\fix-dump.js
+.\backend\fly.toml
 .\backend\import_errors.json
 .\backend\import-to-turso.js
 .\backend\logs\app.log
+.\backend\logs\app1.log
 .\backend\logs\error.log
 .\backend\package.json
 .\backend\package-lock.json
 .\backend\public\tools\spartito-viewer.html
 .\backend\scripts\check-db.js
+.\backend\scripts\popola-blob.js
 .\backend\src\config\database.js
 .\backend\src\config\logger.js
+.\backend\src\config\paths.js
 .\backend\src\config\turso-sync.js
 .\backend\src\controllers\documentController.js
 .\backend\src\controllers\eventController.js
+.\backend\src\controllers\registrationController.js
 .\backend\src\controllers\songController.js
 .\backend\src\index.js
 .\backend\src\middleware\correlationId.js
@@ -108,12 +123,18 @@ Estensioni principali:
 .\backend\src\models\EventSong.js
 .\backend\src\models\EventSongDocument.js
 .\backend\src\models\index.js
+.\backend\src\models\Registration.js
 .\backend\src\models\Song.js
 .\backend\src\models\SongDocument.js
+.\backend\src\routes\abcTemp.js
 .\backend\src\routes\documents.js
 .\backend\src\routes\events.js
+.\backend\src\routes\mxlTemp.js
+.\backend\src\routes\registrations.js
 .\backend\src\routes\songs.js
+.\backend\test-nxtmd.js
 .\backend\test-turso.js
+.\backend\test-turso-semplice.js
 .\backend\uploads\1785775048837_Alleria_Bb_VoxSax.pdf
 .\backend\uploads\1785775130617_Alleria_Eb_VoxSaxESoloScritto.pdf
 .\backend\uploads\1786200872201_Pierino_il_Lupo_Prokofiev_arr_Philipe_Marilia_Alto_in_C.mxl
@@ -127,6 +148,10 @@ Estensioni principali:
 .\backend\uploads\1786702566381_GENERALE1-DEGREGORI.kar
 .\backend\uploads\1786998523682_Alleria_-Pino_Daniele_VoxAcc.mxl
 .\backend\wipe-turso.js
+.\CHANGELOG.md
+.\DEPLOY.md
+.\Dockerfile
+.\fly.toml
 .\frontend\.oxlintrc.json
 .\frontend\index.html
 .\frontend\package.json
@@ -152,17 +177,22 @@ Estensioni principali:
 .\frontend\src\pages\EventSetlist.jsx
 .\frontend\src\pages\EventSongDocuments.jsx
 .\frontend\src\pages\EventSongsAssignment.jsx
+.\frontend\src\pages\MxlViewerPage.jsx
+.\frontend\src\pages\ViewerPage.jsx
 .\frontend\src\services\api.js
 .\frontend\src\services\mxlToAbc.js
 .\frontend\vite.config.js
+.\README.md
 .\scripts\debug-song-documents.js
+.\scripts\fix-orphan-documents.js
 .\scripts\fix-view-event-full.js
-.\scripts\full-copy.js
+.\scripts\full-copy.DISABLED.js
 .\scripts\last_sync.json
 .\scripts\package.json
 .\scripts\package-lock.json
 .\scripts\sync-incremental.js
 .\spartito-viewer.html
+.\test-produzione.log
 
 ========== DIPENDENZE ==========
 --- FRONTEND package.json: C:\musica_eventi_e_documenti_web\frontend\package.json ---
@@ -238,13 +268,21 @@ prod winston            ^3.19.0
 .\backend\src\models\EventSongDocument.js
    - model (sequelize.define): EventSongDocument
 .\backend\src\models\index.js
+.\backend\src\models\Registration.js
+   - model (sequelize.define): Registration
 .\backend\src\models\Song.js
    - model (sequelize.define): Song
 .\backend\src\models\SongDocument.js
    - model (sequelize.define): SongDocument
 
 ========== ROTTE API (Express) ==========
+.\backend\src\routes\abcTemp.js
+   POST   /
+   GET    /:id
 .\backend\src\routes\documents.js
+   GET    /
+   POST   /sync
+   POST   /upload-big
    GET    /song/:songId
    GET    /:id
    GET    /:id/view
@@ -261,7 +299,20 @@ prod winston            ^3.19.0
    POST   /
    PUT    /:id
    DELETE /:id
+.\backend\src\routes\mxlTemp.js
+   GET    /:id/content
+   GET    /:id
+.\backend\src\routes\registrations.js
+   POST   /
+   GET    /stats
+   GET    /
+   GET    /:id
+   PUT    /:id/status
+   POST   /mark-exported
+   POST   /mark-published
+   DELETE /:id
 .\backend\src\routes\songs.js
+   GET    /
    GET    /event/:eventId
    GET    /:id
    GET    /:id/documents
@@ -271,21 +322,31 @@ prod winston            ^3.19.0
 
 ========== MOUNT POINTS API ==========
    /uploads                  <- express
+   /uploads                  <- express
    /api/songs                <- songsRoutes
    /api/events               <- eventsRoutes
    /api/documents            <- documentsRoutes
+   /api/registrations        <- registrationsRoutes
+   /api/abc-temp             <- abcTempRoutes
+   /api/mxl-temp             <- mxlTempRoutes
 
 ========== DEPLOY / PRODUZIONE ==========
-Nessun file di deploy noto (Docker/Zeabur/Koyeb/Render/Fly/Railway/Vercel/Netlify).
+File di deploy trovati:
+  - .\.dockerignore
+  - .\backend\.dockerignore
+  - .\backend\Dockerfile
+  - .\backend\fly.toml
+  - .\Dockerfile
+  - .\fly.toml
 
 GitHub Actions: nessun workflow
 
 Riferimenti a variabili di produzione nel codice (backend/src):
-  index.js:51  const PORT = process.env.PORT || 5000;
-  index.js:92  if (process.env.NODE_ENV !== 'production') {
-  index.js:124  environment: process.env.NODE_ENV || 'development',
-  index.js:167  if (process.env.NODE_ENV !== 'production') {
-  index.js:177  logger.info(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  index.js:55  const PORT = process.env.PORT || 5000;
+  index.js:106  if (process.env.NODE_ENV !== 'production') {
+  index.js:138  environment: process.env.NODE_ENV || 'development',
+  index.js:194  if (process.env.NODE_ENV !== 'production') {
+  index.js:204  logger.info(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
 
 .gitignore (pattern DB/asset rilevanti):
   .env
@@ -309,12 +370,14 @@ Riferimenti a variabili di produzione nel codice (backend/src):
 ========== DATABASE ==========
 File DB rilevati:
   .\backend\data\backup_pre_turso.db | 12.627.968 bytes [BACKUP]
-  .\backend\data\musica_eventi_e_documenti_web.db | 12.713.984 bytes
+  .\backend\data\musica_eventi_e_documenti_web.db | 14.725.120 bytes
   .\backend\data\musica_eventi_e_documenti_web.db.2026-08-25 backup | 282.624 bytes [BACKUP]
   .\backend\data\musica_eventi_e_documenti_web.db.2026-09-10 | 11.718.656 bytes [BACKUP]
   .\backend\data\musica_eventi_e_documenti_web.db.attuale | 23.121.920 bytes [BACKUP]
   .\backend\data\musica_eventi_e_documenti_web.db.bak | 11.726.848 bytes [BACKUP]
   .\backend\data\musica_eventi_e_documenti_web.db.bis | 253.952 bytes [BACKUP]
+  .\backend\data\musica_eventi_e_documenti_web.db.pre-blob-fix | 12.623.872 bytes
+  .\backend\data\musica_eventi_e_documenti_web.db.pre-status-fix | 13.041.664 bytes
   .\backend\data\musica_eventi_e_documenti_webold2026-08-29.db | 405.504 bytes [BACKUP]
   .\backend\data\musica_eventi_e_documenti_web_pre_turso.db | 12.627.968 bytes [BACKUP]
 
@@ -327,6 +390,15 @@ Configurazioni DB (stringhe di connessione in .env / config):
   --- .\backend\import-to-turso.js ---
       * Import del dump SQL locale su Turso Cloud - VERSIONE ROBUSTA
      const { createClient } = require('@libsql/client');
+  --- .\backend\test-turso-semplice.js ---
+     const { createClient } = require('@libsql/client');
+       console.log('--- Test connessione Turso (client puro) ---');
+       console.log('URL:', process.env.TURSO_DATABASE_URL);
+       console.log('Token presente:', !!process.env.TURSO_AUTH_TOKEN);
+           url: process.env.TURSO_DATABASE_URL,
+           authToken: process.env.TURSO_AUTH_TOKEN,
+         console.log('[OK] Client libsql creato');
+           "SELECT name FROM sqlite_master WHERE type='table' LIMIT 10"
   --- .\backend\test-turso.js ---
      const { createClient } = require('@libsql/client');
        console.log('🔍 Test connessione Turso...\n');
@@ -349,6 +421,16 @@ Configurazioni DB (stringhe di connessione in .env / config):
          authToken: process.env.TURSO_AUTH_TOKEN,
        console.log('🧹 Wipe del DB Turso...\n');
          "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%'"
+  --- .\backend\backend\test-turso-semplice.js ---
+     // test-turso-semplice.js
+     const { createClient } = require('@libsql/client');
+       console.log('🔍 Test connessione Turso (client puro)');
+       console.log('URL:', process.env.TURSO_DATABASE_URL);
+       console.log('Token presente:', !!process.env.TURSO_AUTH_TOKEN);
+           url: process.env.TURSO_DATABASE_URL,
+           authToken: process.env.TURSO_AUTH_TOKEN,
+         console.log('✅ Client libsql creato');
+           "SELECT name FROM sqlite_master WHERE type='table' LIMIT 10"
   --- .\backend\scripts\check-db.js ---
      const sqlite3 = require('sqlite3').verbose();
      console.log('📂 Database path:', dbPath);
@@ -358,17 +440,26 @@ Configurazioni DB (stringhe di connessione in .env / config):
   --- .\backend\src\config\database.js ---
       * 📁 PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\config\database.js
       * 📝 DESCRIZIONE: Configurazione del database Sequelize
-      * - Supporta SQLite (default) e PostgreSQL
-      * - Configurazione pool di connessioni
-      * - Test di connessione all'avvio
-     // Determina il database da usare
-     const isSQLite = process.env.DB_DIALECT === 'sqlite' || !process.env.DB_DIALECT;
-     if (isSQLite) {
-       // Configurazione SQLite
-       const dbPath = process.env.DB_STORAGE || './data/musica_eventi_e_documenti_web.db';
-         dialect: 'sqlite',
-         storage: dbPath,
-         // Configurazione del pool (solo per SQLite è meno rilevante)
+      * - Sviluppo: SQLite locale (fonte di verità)
+      * - Produzione: Turso Cloud (tramite @nxtmd/turso)
+     let isSQLite = false;
+     let isTurso = false;
+     // Determina quale database usare
+     const useTurso = process.env.NODE_ENV === 'production'
+                   && process.env.TURSO_DATABASE_URL
+                   && process.env.TURSO_AUTH_TOKEN;
+     if (useTurso) {
+       // PRODUZIONE → Turso Cloud diretto
+         const { createClient } = require('@libsql/client');
+         const TursoSequelize = require('@nxtmd/turso');
+           url: process.env.TURSO_DATABASE_URL,
+           authToken: process.env.TURSO_AUTH_TOKEN,
+         sequelize = new TursoSequelize({ client });
+         isTurso = true;
+         logger.info('🌐 Database: Turso Cloud (produzione)');
+         logger.error('❌ Errore inizializzazione Turso:', { error: err.message });
+         logger.warn('⚠️  Fallback a SQLite locale');
+         isTurso = false;
   --- .\backend\src\config\turso-sync.js ---
       * 📁 PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\config\turso-sync.js
       * 📝 DESCRIZIONE: Sincronizzazione embedded replica tra SQLite locale e Turso Cloud
@@ -417,17 +508,17 @@ Tabelle:
 Conteggio righe per tabella:
   activity_log                          0
   instrument_parts                      0
-  v_documents_with_songs               49
-  documents                            49
+  v_documents_with_songs               53
+  documents                            53
   musical_documents                     0
-  v_event_documents                    50
+  v_event_documents                    54
   downloads                             0
   registrations                         5
   v_event_documents_summary            48
   event_assignments                     0
-  song_documents                       49
+  song_documents                       52
   v_event_full                         11
-  event_song_documents                 51
+  event_song_documents                 55
   song_documents_old                    7
   v_event_songs                        48
   event_songs                          48
@@ -435,7 +526,7 @@ Conteggio righe per tabella:
   v_registrations_full                  5
   event_suggestions                     0
   songs                                51
-  v_song_documents                     49
+  v_song_documents                     52
   events                               11
   user_feedback                         0
   image_suggestions                     0
@@ -450,18 +541,18 @@ File di dump/export (esclusi dal conteggio DB):
   .\backend_src.zip | 0,01 MB
 
 ========== DIMENSIONI SEPARATE ==========
-Codice (js/jsx/json/css/html/md/yml)     :       62 file  |      0,62 MB
-Asset (img/pdf/mxl/kar/mid/mp3 + uploads):       21 file  |      6,99 MB
+Codice (js/jsx/json/css/html/md/yml)     :       78 file  |      0,68 MB
+Asset (img/pdf/mxl/kar/mid/mp3 + uploads):       23 file  |     17,32 MB
 Dump/Export (dump_*.sql, *.zip, pre_turso):        2 file  |     46,96 MB
-Backup DB (.bak/.bis/.attuale/old*)      :       11 file  |     69,42 MB
+Backup DB (.bak/.bis/.attuale/old*)      :       12 file  |     69,42 MB
 Binari (.exe/.dll)                       :        1 file  |      3,84 MB
 
 ============================================================
 RIEPILOGO
 ============================================================
-Cartelle              : 25
-File totali (grezzi)  : 118
-Dimensione totale     : 155.37 MB
+Cartelle              : 27
+File totali (grezzi)  : 151
+Dimensione totale     : 199.95 MB
 
 Report salvato in     : C:\musica_eventi_e_documenti_web\analisi_web.txt
 ============================================================

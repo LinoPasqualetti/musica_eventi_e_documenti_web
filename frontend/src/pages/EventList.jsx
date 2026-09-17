@@ -6,7 +6,6 @@ import {
   Grid,
   Card,
   CardContent,
-  CardMedia,
   Typography,
   Chip,
   TextField,
@@ -99,7 +98,7 @@ const EventList = () => {
 
       {/* Filtri */}
       <Grid container spacing={1.5} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={4}>
+        <Grid size={{ xs: 12, md: 4 }}>
           <TextField
             fullWidth
             label="Cerca"
@@ -110,7 +109,7 @@ const EventList = () => {
             placeholder="Titolo, tema, descrizione..."
           />
         </Grid>
-        <Grid item xs={12} md={3}>
+        <Grid size={{ xs: 12, md: 3 }}>
           <TextField
             fullWidth
             select
@@ -128,7 +127,7 @@ const EventList = () => {
             <MenuItem value="laboratorio">Laboratorio</MenuItem>
           </TextField>
         </Grid>
-        <Grid item xs={12} md={3}>
+        <Grid size={{ xs: 12, md: 3 }}>
           <TextField
             fullWidth
             select
@@ -145,12 +144,12 @@ const EventList = () => {
             <MenuItem value="expert">Esperto</MenuItem>
           </TextField>
         </Grid>
-        <Grid item xs={12} md={2}>
+        <Grid size={{ xs: 12, md: 2 }}>
           <Button
             fullWidth
             variant="outlined"
             onClick={handleResetFilters}
-            sx={{ height: '100%' }}
+            sx={{ height: { xs: 'auto', md: '100%' } }}
           >
             Reset
           </Button>
@@ -163,7 +162,7 @@ const EventList = () => {
           Nessun evento trovato
         </Typography>
       ) : (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
           {events.map((event) => {
             const eventId = event.id;
             const eventTitle = event.title || 'Senza titolo';
@@ -178,40 +177,66 @@ const EventList = () => {
                 sx={{
                   width: '100%',
                   borderRadius: 2,
+                  overflow: 'hidden',
                   '&:hover': { boxShadow: 4 }
                 }}
               >
                 <CardActionArea
                   onClick={() => handleEventClick(eventId)}
-                  sx={{ display: 'flex', alignItems: 'center' }}
+                  sx={{
+                    display: 'flex',
+                    flexDirection: { xs: 'column', md: 'row' },
+                    alignItems: 'stretch',
+                  }}
                 >
-                  {eventImage ? (
-                    <CardMedia
-                      component="img"
-                      sx={{ width: 100, height: 80, objectFit: 'cover', flexShrink: 0 }}
-                      image={eventImage}
-                      alt={eventTitle}
-                    />
-                  ) : (
-                    <Box
-                      sx={{
-                        width: 100,
-                        height: 80,
-                        bgcolor: 'primary.light',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        flexShrink: 0
-                      }}
-                    >
-                      <MusicNoteIcon sx={{ fontSize: 32, color: 'white' }} />
-                    </Box>
-                  )}
+                  {/* Immagine come background-image: NON può fallire */}
+                  <Box
+                    sx={{
+                      width: { xs: '100%', md: 140 },
+                      height: { xs: 180, md: 100 },
+                      minHeight: { xs: 180, md: 100 },
+                      flexShrink: 0,
+                      position: 'relative',
+                      bgcolor: 'primary.light',
+                      backgroundImage: eventImage ? `url("${eventImage}")` : 'none',
+                      backgroundSize: 'cover',
+                      backgroundPosition: 'center',
+                      backgroundRepeat: 'no-repeat',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    {/* Fallback icona se non c'è immagine */}
+                    {!eventImage && (
+                      <MusicNoteIcon sx={{ fontSize: 40, color: 'white' }} />
+                    )}
+                  </Box>
 
-                  <CardContent sx={{ flex: 1, py: 1.5, px: 2, '&:last-child': { pb: 1.5 } }}>
+                  {/* Contenuto testuale */}
+                  <CardContent
+                    sx={{
+                      flex: 1,
+                      minWidth: 0,
+                      py: 1.5,
+                      px: 2,
+                      '&:last-child': { pb: 1.5 },
+                    }}
+                  >
                     <Stack spacing={0.5}>
+                      {/* Titolo + Chip tema */}
                       <Stack direction="row" spacing={1} alignItems="center">
-                        <Typography variant="subtitle2" fontWeight="bold" noWrap sx={{ flex: 1 }}>
+                        <Typography
+                          variant="subtitle2"
+                          fontWeight="bold"
+                          sx={{
+                            flex: 1,
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
                           {eventTitle}
                         </Typography>
                         {event.theme && (
@@ -219,32 +244,62 @@ const EventList = () => {
                             label={event.theme}
                             size="small"
                             color="primary"
-                            sx={{ height: 18, fontSize: 10 }}
+                            sx={{
+                              height: 20,
+                              fontSize: 10,
+                              maxWidth: { xs: 100, md: 180 },
+                              '& .MuiChip-label': {
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                display: 'block',
+                              },
+                              flexShrink: 0,
+                            }}
                           />
                         )}
                       </Stack>
 
-                      <Stack direction="row" spacing={1} alignItems="center">
+                      {/* Data + luogo */}
+                      <Stack
+                        direction="row"
+                        spacing={0.5}
+                        alignItems="center"
+                        sx={{ flexWrap: 'wrap', rowGap: 0.5 }}
+                      >
                         <CalendarMonthIcon sx={{ fontSize: 14 }} color="action" />
                         <Typography variant="caption" color="text.secondary">
                           {eventDate
                             ? format(new Date(eventDate), 'd MMM yyyy', { locale: it })
                             : 'N/D'}
                         </Typography>
-                        <LocationOnIcon sx={{ fontSize: 14, ml: 1 }} color="action" />
-                        <Typography variant="caption" color="text.secondary" noWrap>
+                        <LocationOnIcon
+                          sx={{ fontSize: 14, ml: { xs: 0, md: 1 } }}
+                          color="action"
+                        />
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            maxWidth: { xs: '100%', md: 200 },
+                          }}
+                        >
                           {eventLocation || 'N/D'}
                         </Typography>
                       </Stack>
 
+                      {/* Categoria + difficoltà */}
                       {(event.category || eventDifficulty) && (
-                        <Stack direction="row" spacing={0.5}>
+                        <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', rowGap: 0.5 }}>
                           {event.category && (
                             <Chip
                               label={event.category}
                               size="small"
                               variant="outlined"
-                              sx={{ height: 16, fontSize: 10 }}
+                              sx={{ height: 18, fontSize: 10 }}
                             />
                           )}
                           {eventDifficulty && (
@@ -253,7 +308,7 @@ const EventList = () => {
                               size="small"
                               variant="outlined"
                               color="info"
-                              sx={{ height: 16, fontSize: 10 }}
+                              sx={{ height: 18, fontSize: 10 }}
                             />
                           )}
                         </Stack>
@@ -261,7 +316,15 @@ const EventList = () => {
                     </Stack>
                   </CardContent>
 
-                  <ChevronRightIcon sx={{ mr: 1, color: 'text.disabled' }} />
+                  {/* Chevron: nascosto su mobile, visibile su desktop */}
+                  <ChevronRightIcon
+                    sx={{
+                      display: { xs: 'none', md: 'block' },
+                      mr: 1,
+                      color: 'text.disabled',
+                      alignSelf: 'center',
+                    }}
+                  />
                 </CardActionArea>
               </Card>
             );

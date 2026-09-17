@@ -17,8 +17,8 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Box, CircularProgress, Alert, Typography } from '@mui/material';
-import AbcViewer from '../components/AbcViewer';
-
+//import AbcViewer from '../components/AbcViewer';
+import ScoreViewer from '../components/ScoreViewer';
 export default function ViewerPage() {
   const [params] = useSearchParams();
   const id = params.get('id');
@@ -98,7 +98,7 @@ export default function ViewerPage() {
 
   return (
     <Box sx={{ p: 2 }}>
-      <AbcViewer contentUrl={abcUrl} fileName={fileName} />
+     <ScoreViewer contentUrl={abcUrl} fileName={fileName} fallbackTitle={fileName} />
     </Box>
   );
 }
