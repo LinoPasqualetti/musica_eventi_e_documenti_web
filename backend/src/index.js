@@ -1,13 +1,5 @@
 /**
  * 📁 PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\index.js
- *
- * 📝 DESCRIZIONE: Punto di ingresso principale del server
- * - Configurazione Express con tutti i middleware
- * - Gestione CORS, Helmet, Compressione
- * - Middleware personalizzati (correlationId, performance, errorHandler)
- * - Connessione al database + Turso embedded replica
- * - Routes API
- * - Gestione errori e shutdown graceful
  */
 
 // ============================================
@@ -47,6 +39,43 @@ const documentsRoutes = require('./routes/documents');
 const registrationsRoutes = require('./routes/registrations');
 const mxlTempRoutes = require('./routes/mxlTemp');
 const abcTempRoutes = require('./routes/abcTemp');
+const organsRoutes = require('./routes/organs');
+const authRoutes = require('./routes/auth');
+
+// ============================================
+// GESTIONE ERRORI NON CATTURATI (PRIMA DI TUTTO)
+// ============================================
+process.on('uncaughtException', (error) => {
+  console.error('\n💥 ========== UNCAUGHT EXCEPTION ==========');
+  console.error('Message:', error && error.message);
+  console.error('Stack:', error && error.stack);
+  console.error('Full error:', error);
+  console.error('==========================================\n');
+
+  try {
+    logger.error('💥 Uncaught Exception:', {
+      error: error && error.message,
+      stack: error && error.stack,
+    });
+  } catch (_) {}
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('\n💥 ========== UNHANDLED REJECTION ==========');
+  console.error('Reason:', reason);
+  if (reason && reason.stack) {
+    console.error('Stack:', reason.stack);
+  }
+  console.error('Promise:', promise);
+  console.error('==========================================\n');
+
+  try {
+    logger.error('💥 Unhandled Rejection:', {
+      reason: (reason && reason.message) || reason,
+      stack: reason && reason.stack,
+    });
+  } catch (_) {}
+});
 
 // ============================================
 // INIZIALIZZAZIONE APP
@@ -84,16 +113,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // ============================================
 // FRONTEND STATICO (build React/Vite)
 // ============================================
-// Serve i file uploads dal volume persistente (data/uploads/)
-// Grazie a config/paths.js, il path è automatico:
-//   - development: backend/data/uploads/
-//   - production:  /data/uploads/
 app.use('/uploads', express.static(UPLOADS_DIR));
-
-// Serve i file statici del frontend buildato (JS, CSS, SVG, ecc.)
 app.use(express.static(path.join(__dirname, '../../frontend/dist')));
-
-// SoundFont per midi-audio-player
 app.use('/soundfonts', express.static(path.join(__dirname, '../public/soundfonts')));
 
 // ============================================
@@ -150,10 +171,10 @@ app.use('/api/documents', documentsRoutes);
 app.use('/api/registrations', registrationsRoutes);
 app.use('/api/abc-temp', abcTempRoutes);
 app.use('/api/mxl-temp', mxlTempRoutes);
+app.use('/api', organsRoutes);
+app.use('/api/auth', authRoutes);
 
-// 🔥 FIX 1: Forza UTF-8 SOLO sulle risposte API (non su SPA/statici)
-// Il vecchio middleware applicava application/json a TUTTE le richieste,
-// rompendo il Content-Type delle pagine HTML servite dal SPA fallback.
+// Forza UTF-8 SOLO sulle risposte API
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/')) {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -163,11 +184,7 @@ app.use((req, res, next) => {
 
 // ============================================
 // SPA FALLBACK (React Router)
-// Tutte le route non-API vengono servite da index.html
 // ============================================
-// 🔥 FIX 2: res.type('html') imposta esplicitamente Content-Type: text/html
-// Senza questo, con X-Content-Type-Options: nosniff (da helmet),
-// Chrome interpreta l'HTML come XML e mostra "Formatta il codice".
 app.get(/^\/(?!api|uploads|soundfonts).*/, (req, res, next) => {
   res.type('html').sendFile(
     path.join(__dirname, '../../frontend/dist/index.html'),
@@ -210,27 +227,35 @@ async function startServer() {
 
     // 3. Sincronizza i modelli (solo in sviluppo)
     if (process.env.NODE_ENV !== 'production') {
-      // SYNC DISABILITATO - uso database esistente
       console.log('ℹ️  Database sync disabilitato - uso struttura esistente');
-      // await sequelize.sync({ alter: true });
       logger.info('📦 Database models synced');
     }
 
     // 4. Avvia il server
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       logger.info(`🚀 Server running on http://localhost:${PORT}`);
       logger.info(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       logger.info(`🔗 Health check: http://localhost:${PORT}/api/health`);
       logger.info(`📝 Logs directory: ${path.join(__dirname, '../logs')}`);
 
-      // Mostra i modelli caricati
       const models = Object.keys(sequelize.models);
       if (models.length > 0) {
         logger.info(`📚 Models loaded: ${models.join(', ')}`);
       }
     });
 
+    server.on('error', (err) => {
+      console.error('\n💥 ========== SERVER ERROR ==========');
+      console.error(err);
+      console.error(err.stack);
+      console.error('====================================\n');
+    });
+
   } catch (error) {
+    console.error('\n💥 ========== STARTUP FAILED ==========');
+    console.error(error);
+    console.error(error.stack);
+    console.error('======================================\n');
     logger.error('❌ Failed to start server:', {
       error: error.message,
       stack: error.stack
@@ -246,17 +271,14 @@ async function startServer() {
 async function gracefulShutdown(signal) {
   logger.info(`🛑 ${signal} received. Shutting down gracefully...`);
 
-  // 1. Ferma sync periodica
   stopTursoSync();
 
-  // 2. Push finale verso Turso (best effort)
   try {
     await forceSyncNow();
   } catch (e) {
     logger.warn('⚠️ Sync finale fallita:', { error: e.message });
   }
 
-  // 3. Chiudi Sequelize
   try {
     await sequelize.close();
     logger.info('✅ Database connection closed.');
@@ -269,24 +291,6 @@ async function gracefulShutdown(signal) {
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-// ============================================
-// GESTIONE ERRORI NON CATTURATI
-// ============================================
-
-process.on('uncaughtException', (error) => {
-  logger.error('💥 Uncaught Exception:', {
-    error: error.message,
-    stack: error.stack
-  });
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('💥 Unhandled Rejection:', {
-    reason: reason?.message || reason,
-    promise: promise
-  });
-});
 
 // ============================================
 // AVVIO

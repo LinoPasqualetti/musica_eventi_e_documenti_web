@@ -1,44 +1,59 @@
+// backend/src/routes/registrations.js
 const express = require('express');
 const router = express.Router();
 const registrationController = require('../controllers/registrationController');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
 
 // ============================================
-// ROUTE PUBBLICHE (utente si iscrive)
+// ROUTE PUBBLICHE
 // ============================================
 
-// Crea una nuova registrazione
-router.post('/', registrationController.createRegistration);
+// Conteggi slot (livello 2 - aggregati)
+router.get(
+  '/slots-availability/:eventSongId',
+  registrationController.getSlotsAvailability
+);
 
 // ============================================
-// ROUTE DI LETTURA
+// ROUTE AUTENTICATE (nuovo schema)
+// ============================================
+
+// Le mie candidature
+router.get('/me', requireAuth, registrationController.getMyRegistrations);
+
+// ============================================
+// ROUTE LEGACY / MISTE
 // ============================================
 
 // Statistiche
 router.get('/stats', registrationController.getStats);
 
-// Elenco (con filtri ?status=, ?event_id=, ?user_id=)
+// Elenco (con filtri)
 router.get('/', registrationController.getRegistrations);
 
 // Dettaglio singola
 router.get('/:id', registrationController.getRegistrationById);
 
-// ============================================
-// ROUTE DI AGGIORNAMENTO
-// ============================================
+// Crea candidatura: usa optionalAuth perché il controller decide
+// se richiede auth (nuovo schema) o no (legacy).
+router.post(
+  '/',
+  optionalAuth,
+  registrationController.createRegistration
+);
 
-// Aggiorna status (admin valida/rifiuta, o script sync)
+// Aggiorna status
 router.put('/:id/status', registrationController.updateStatus);
 
-// Segna un batch come "exported" (chiamato dallo script export)
+// Batch update
 router.post('/mark-exported', registrationController.markExported);
-
-// Segna un batch come "published" (chiamato dallo script publish)
 router.post('/mark-published', registrationController.markPublished);
 
-// ============================================
-// ROUTE DI CANCELLAZIONE
-// ============================================
-
-router.delete('/:id', registrationController.deleteRegistration);
+// Delete (soft delete con owner check, se autenticato)
+router.delete(
+  '/:id',
+  optionalAuth,
+  registrationController.deleteRegistration
+);
 
 module.exports = router;

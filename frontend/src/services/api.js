@@ -39,6 +39,15 @@ api.interceptors.response.use(
   }
 );
 
+// ─── Auth interceptor: aggiunge il token JWT ad ogni richiesta ────────
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('mpt_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 export const eventService = {
   getAll: (params) => api.get('/events', { params }),
   getById: (id) => api.get(`/events/${id}`),
@@ -71,5 +80,39 @@ export const documentService = {
   // Utility per scaricare come blob (es. pulsante "download")
   download: (id) => api.get(`/documents/${id}/content`, { responseType: 'blob' }),
 };
+
+// ─── Auth service ──────────────────────────────────────────────────────
+export const authService = {
+  register: (payload) => api.post('/auth/register', payload),
+  login: (payload) => api.post('/auth/login', payload),
+  me: () => api.get('/auth/me'),
+  updateProfile: (payload) => api.patch('/auth/me', payload),
+  changePassword: (payload) => api.post('/auth/change-password', payload),
+  forgotPassword: (email) => api.post('/auth/forgot-password', { email }),
+  resetPassword: (token, new_password) => api.post('/auth/reset-password', { token, new_password }),
+};
+
+// ─── Registration service (candidature) ──────────────────────────────
+export const registrationService = {
+  // Pubblico: conteggi slot per un event-song
+  getSlotsAvailability: (eventSongId) =>
+    api.get(`/registrations/slots-availability/${eventSongId}`),
+
+  // Autenticato: crea candidatura
+  create: (payload) => api.post('/registrations', payload),
+
+  // Autenticato: le mie candidature
+  getMine: () => api.get('/registrations/me'),
+
+  // Autenticato: ritira candidatura (soft delete)
+  withdraw: (id) => api.delete(`/registrations/${id}`),
+
+  // Admin: tutte le candidature di un evento
+  getByEvent: (eventId) => api.get(`/events/${eventId}/registrations`),
+};
+
+// ─── Helper: risolve eventSongId da (eventId, songId) ────────────────
+export const resolveEventSongId = (eventId, songId) =>
+  api.get(`/events/${eventId}/songs/${songId}/event-song-id`);
 
 export default api;

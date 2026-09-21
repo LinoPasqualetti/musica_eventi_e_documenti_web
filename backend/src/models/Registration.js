@@ -17,12 +17,12 @@ module.exports = (sequelize) => {
     },
     status: {
       // Valori ammessi:
-      //   'pending'    - Utente iscritto, in attesa di export
-      //   'exported'   - Esportato in JSON, in attesa di import sul desktop
-      //   'imported'   - Importato sul desktop, in attesa di validazione
-      //   'validated'  - Admin ha approvato
-      //   'rejected'   - Admin ha rifiutato
-      //   'published'  - Ripubblicato sul web (stato finale)
+      //   'pending'    - in attesa di validazione
+      //   'waitlist'   - in lista d'attesa
+      //   'confirmed'  - confermato dall'admin
+      //   'rejected'   - rifiutato dall'admin
+      //   'cancelled'  - cancellato dall'utente
+      //   (legacy: 'exported', 'imported', 'validated', 'published')
       type: DataTypes.TEXT,
       allowNull: false,
       defaultValue: 'pending'
@@ -42,6 +42,7 @@ module.exports = (sequelize) => {
       defaultValue: 1
     },
     selected_song_ids: {
+      // LEGACY: lista separata da virgole. Non più usato.
       type: DataTypes.TEXT,
       allowNull: true
     },
@@ -68,7 +69,36 @@ module.exports = (sequelize) => {
     updated_at: {
       type: DataTypes.TEXT,
       allowNull: true
-    }
+    },
+    // ─── Nuove colonne (organico) ────────────────────────────────
+    song_id: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    organ_slot_id: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    time_description: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    deleted_at: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    synced_to_flutter_at: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    candidate_name: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    candidate_email: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
   }, {
     tableName: 'registrations',
     timestamps: false,
@@ -79,6 +109,18 @@ module.exports = (sequelize) => {
     Registration.belongsTo(models.Event, {
       foreignKey: 'event_id',
       as: 'event'
+    });
+    Registration.belongsTo(models.Song, {
+      foreignKey: 'song_id',
+      as: 'song'
+    });
+    Registration.belongsTo(models.OrganSlot, {
+      foreignKey: 'organ_slot_id',
+      as: 'organSlot'
+    });
+    Registration.belongsTo(models.User, {
+      foreignKey: 'user_id',
+      as: 'user'
     });
   };
 

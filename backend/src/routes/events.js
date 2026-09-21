@@ -8,7 +8,8 @@ const router = express.Router();
 const eventController = require('../controllers/eventController');
 const songController = require('../controllers/songController');
 const documentController = require('../controllers/documentController');
-
+const registrationController = require('../controllers/registrationController');
+const { requireAuth, requireAdmin } = require('../middleware/auth');
 // VERIFICA: I controller sono stati importati correttamente?
 console.log('eventController:', Object.keys(eventController));
 console.log('songController:', Object.keys(songController));
@@ -24,6 +25,40 @@ console.log('documentController:', Object.keys(documentController));
  * Risposta: { songId: count, ... }
  */
 router.get('/:eventId/document-counts', eventController.getDocumentCountsForEvent);
+/**
+ * GET /api/events/:eventId/registrations
+ * Admin - tutte le candidature dell'evento
+ */
+router.get(
+  '/:eventId/registrations',
+  requireAuth,
+  requireAdmin,
+  registrationController.getRegistrationsByEvent
+);
+/**
+ * GET /api/events/:eventId/songs/:songId/event-song-id
+ * Ritorna l'id di event_songs per (event_id, song_id).
+ * Usato dal frontend per aprire la pagina candidatura.
+ */
+router.get(
+  '/:eventId/songs/:songId/event-song-id',
+  async (req, res, next) => {
+    try {
+      const { eventId, songId } = req.params;
+      const { EventSong } = require('../models');
+      const es = await EventSong.findOne({
+        where: { event_id: eventId, song_id: songId },
+        attributes: ['id'],
+      });
+      if (!es) {
+        return res.status(404).json({ error: 'EventSong non trovato' });
+      }
+      res.json({ eventSongId: es.id });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 /**
  * GET /api/events/:eventId/songs

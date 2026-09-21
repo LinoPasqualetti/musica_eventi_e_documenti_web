@@ -7,6 +7,9 @@ const EventSong = require('./EventSong');
 const SongDocument = require('./SongDocument');
 const EventSongDocument = require('./EventSongDocument');
 const Registration = require('./Registration');
+const Organ = require('./Organ');
+const OrganSlot = require('./OrganSlot');
+const User = require('./User');
 
 const models = {
   Event: Event(sequelize),
@@ -15,10 +18,12 @@ const models = {
   EventSong: EventSong(sequelize),
   SongDocument: SongDocument(sequelize),
   EventSongDocument: EventSongDocument(sequelize),
-  Registration: Registration(sequelize)
+  Registration: Registration(sequelize),
+  Organ: Organ(sequelize),
+  OrganSlot: OrganSlot(sequelize),
+  User: User(sequelize),
 };
 
-// Imposta le associazioni
 Object.values(models).forEach(model => {
   if (model.associate) {
     model.associate(models);
@@ -27,5 +32,5 @@ Object.values(models).forEach(model => {
 
 module.exports = {
   ...models,
-  sequelize
+  sequelize,
 };

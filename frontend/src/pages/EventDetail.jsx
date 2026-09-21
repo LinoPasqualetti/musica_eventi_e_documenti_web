@@ -22,13 +22,16 @@ import FolderIcon from '@mui/icons-material/Folder';
 import FolderOpenIcon from '@mui/icons-material/FolderOpen';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import MusicNoteIcon from '@mui/icons-material/MusicNote';
+import PersonAddIcon from '@mui/icons-material/PersonAdd';
+import { useAuth } from '../context/AuthContext';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { eventService } from '../services/api';
 
-const EventDetail = () => {
+  const EventDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [event, setEvent] = useState(null);
   const [songs, setSongs] = useState([]);
   const [docCounts, setDocCounts] = useState({});
@@ -95,6 +98,13 @@ const EventDetail = () => {
 
   const handleOpenSong = (songId) => {
     navigate(`/event/${id}/song/${songId}`);
+  };
+  const handleCandidatura = (songId) => {
+    if (!isAuthenticated) {
+      navigate(`/login?redirect=/candidatura/${id}/${songId}`);
+    } else {
+      navigate(`/candidatura/${id}/${songId}`);
+    }
   };
 
   // ------------------------------------------------------------
@@ -463,7 +473,6 @@ const EventDetail = () => {
                         ({docCount})
                       </Typography>
                     )}
-
                     {/* Titolo brano (cliccabile) */}
                     <Typography
                       onClick={() => handleOpenSong(song.id)}
@@ -479,7 +488,25 @@ const EventDetail = () => {
                     >
                       {song.title}
                     </Typography>
+
+                    {/* Pulsante candidati (piccolo) */}
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCandidatura(song.id);
+                      }}
+                      sx={{
+                        p: 0.25,
+                        color: '#81c784',
+                        '&:hover': { color: '#66bb6a' }
+                      }}
+                      title="Candidati per questo brano"
+                    >
+                      <PersonAddIcon sx={{ fontSize: 14 }} />
+                    </IconButton>
                   </Box>
+
                 );
               })}
             </Box>
