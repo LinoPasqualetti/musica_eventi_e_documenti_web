@@ -2,7 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const registrationController = require('../controllers/registrationController');
-const { requireAuth, optionalAuth } = require('../middleware/auth');
+const syncController = require('../controllers/syncController');
+const { requireAuth, requireAdmin, optionalAuth } = require('../middleware/auth');
 
 // ============================================
 // ROUTE PUBBLICHE
@@ -12,6 +13,35 @@ const { requireAuth, optionalAuth } = require('../middleware/auth');
 router.get(
   '/slots-availability/:eventSongId',
   registrationController.getSlotsAvailability
+);
+
+// ============================================
+// SYNC Web <-> Flutter (solo admin)
+// NOTA: queste route DEVONO stare PRIMA di /:id
+// ============================================
+
+// Pull: candidature modificate dopo <timestamp>
+router.get(
+  '/since',
+  requireAuth,
+  requireAdmin,
+  syncController.pull
+);
+
+// Ack: Flutter conferma ricezione
+router.post(
+  '/ack',
+  requireAuth,
+  requireAdmin,
+  syncController.ack
+);
+
+// Push: Flutter invia modifiche
+router.post(
+  '/push',
+  requireAuth,
+  requireAdmin,
+  syncController.push
 );
 
 // ============================================
