@@ -4,7 +4,7 @@ import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 import {
   Container, Paper, Typography, TextField, Button, Alert, Box, Link,
   CircularProgress, Radio, RadioGroup, FormControlLabel, FormControl,
-  FormLabel, Divider, Chip, Accordion, AccordionSummary, AccordionDetails,
+  Divider, Chip, Accordion, AccordionSummary, AccordionDetails,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useAuth } from '../context/AuthContext';
@@ -19,7 +19,6 @@ const SECTION_LABELS = {
 
 export default function CandidaturaPage() {
   const { eventId, songId } = useParams();
-  const [eventSongId, setEventSongId] = useState(null);
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
 
@@ -30,12 +29,11 @@ export default function CandidaturaPage() {
   const [forThirdParty, setForThirdParty] = useState(false);
   const [candidateName, setCandidateName] = useState('');
   const [candidateEmail, setCandidateEmail] = useState('');
-  const [selectedSlot, setSelectedSlot] = useState('');
+  const [selectedSlot, setSelectedSlot] = useState(null);
   const [timeDescription, setTimeDescription] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // Precompila il nome se loggato e sta candidando per sé
   useEffect(() => {
     if (user && !forThirdParty) {
       setCandidateName(user.full_name || '');
@@ -44,18 +42,17 @@ export default function CandidaturaPage() {
   }, [user, forThirdParty]);
 
   useEffect(() => {
+    if (user?.email) setCandidateEmail(user.email);
+  }, [user]);
+
+  useEffect(() => {
     let mounted = true;
     const load = async () => {
       try {
-        // 1. Risolvi eventSongId da (eventId, songId)
         const idRes = await resolveEventSongId(eventId, songId);
         const resolvedEventSongId = idRes.data?.eventSongId;
-        if (!resolvedEventSongId) {
-          throw new Error('EventSong non trovato');
-        }
-        if (mounted) setEventSongId(resolvedEventSongId);
+        if (!resolvedEventSongId) throw new Error('EventSong non trovato');
 
-        // 2. Carica slot disponibili
         const res = await registrationService.getSlotsAvailability(resolvedEventSongId);
         if (mounted) {
           setSlotsData(res.data);
@@ -63,7 +60,7 @@ export default function CandidaturaPage() {
         }
       } catch (e) {
         if (mounted) {
-          setError(e.response?.data?.error || e.message || 'Errore nel caricamento degli slot');
+          setError(e.response?.data?.error || e.message || 'Errore');
           setLoading(false);
         }
       }
@@ -94,7 +91,7 @@ export default function CandidaturaPage() {
       await registrationService.create({
         organ_slot_id: selectedSlot,
         candidate_name: candidateName.trim(),
-        candidate_email: candidateEmail.trim() || null,
+        candidate_email: (user?.email || candidateEmail || '').trim() || null,
         time_description: timeDescription.trim() || null,
         notes: notes.trim() || null,
       });
@@ -122,7 +119,6 @@ export default function CandidaturaPage() {
     );
   }
 
-  // Raggruppa slot per sezione
   const slotsBySection = {};
   for (const slot of slotsData?.slots || []) {
     if (!slotsBySection[slot.section]) slotsBySection[slot.section] = [];
@@ -142,7 +138,7 @@ export default function CandidaturaPage() {
         {!isAuthenticated && (
           <Alert severity="info" sx={{ mt: 2 }}>
             Devi <Link component={RouterLink} to={`/login?redirect=/candidatura/${eventId}/${songId}`}>accedere</Link> per candidarti.
-            </Alert>
+          </Alert>
         )}
 
         {error && (
@@ -152,7 +148,6 @@ export default function CandidaturaPage() {
         )}
 
         <Box component="form" onSubmit={handleSubmit} sx={{ mt: 3 }}>
-          {/* Chi sta suonando */}
           <Typography variant="h6" gutterBottom>
             👤 Per chi ti candidi?
           </Typography>
@@ -176,32 +171,27 @@ export default function CandidaturaPage() {
           </FormControl>
 
           <TextField
-            label="Nome del candidato *"
+            label={forThirdParty ? 'Nome di chi suonerà *' : 'Nome del candidato *'}
             fullWidth
             required
             value={candidateName}
             onChange={(e) => setCandidateName(e.target.value)}
-            disabled={!isAuthenticated || !forThirdParty && !!user}
-            helperText={
-              forThirdParty
-                ? 'Nome di chi suonerà'
-                : 'Nome di chi suonerà (precompilato con il tuo nome)'
-            }
+            helperText={forThirdParty ? 'Nome di chi suonerà' : 'Il tuo nome (precompilato)'}
             sx={{ mb: 2 }}
           />
+
           <TextField
-            label="Email del candidato (opzionale)"
+            label="Email del proponente"
             type="email"
             fullWidth
             value={candidateEmail}
-            onChange={(e) => setCandidateEmail(e.target.value)}
-            helperText="Utile se diversa dalla tua"
+            disabled={true}
+            helperText="Email del tuo account (non modificabile)"
             sx={{ mb: 3 }}
           />
 
           <Divider sx={{ my: 3 }} />
 
-          {/* Scelta slot */}
           <Typography variant="h6" gutterBottom>
             🎼 Scegli il tuo ruolo
           </Typography>
@@ -211,80 +201,112 @@ export default function CandidaturaPage() {
               Nessuno slot disponibile per questo brano.
             </Alert>
           ) : (
-            <FormControl component="fieldset" fullWidth>
-              <RadioGroup
-                value={selectedSlot}
-                onChange={(e) => setSelectedSlot(e.target.value)}
-              >
-                {Object.entries(slotsBySection).map(([section, slots]) => {
-                  const sec = SECTION_LABELS[section] || { emoji: '🎵', label: section };
-                  return (
-                    <Accordion key={section} defaultExpanded>
-                      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                        <Typography sx={{ fontWeight: 'bold' }}>
-                          {sec.emoji} {sec.label.toUpperCase()}
-                        </Typography>
-                      </AccordionSummary>
-                      <AccordionDetails>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                          {slots.map((slot) => {
-                            const isFull = slot.available <= 0;
-                            return (
-                              <Box
-                                key={slot.id}
-                                sx={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  p: 1,
-                                  borderRadius: 1,
-                                  bgcolor: isFull ? 'grey.100' : 'transparent',
-                                }}
-                              >
-                                <FormControlLabel
-                                  value={slot.id}
-                                  control={<Radio />}
-                                  label={slot.instrument}
-                                  disabled={isFull && false}
+            <Box>
+              {Object.entries(slotsBySection).map(([section, slots]) => {
+                const sec = SECTION_LABELS[section] || { emoji: '🎵', label: section };
+                return (
+                  <Accordion key={section} defaultExpanded>
+                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                      <Typography sx={{ fontWeight: 'bold' }}>
+                        {sec.emoji} {sec.label.toUpperCase()}
+                      </Typography>
+                    </AccordionSummary>
+                    <AccordionDetails>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {slots.map((slot) => {
+                          const slotIdStr = String(slot.slot_id);
+                          const isFull = slot.available <= 0;
+                          const isSelected = selectedSlot === slotIdStr;
+
+                          return (
+                            <Box
+                              key={`slot-box-${slot.slot_id}`}
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                p: 1.5,
+                                borderRadius: 1,
+                                cursor: isFull ? 'not-allowed' : 'pointer',
+                                backgroundColor: isFull
+                                  ? '#f5f5f5'
+                                  : isSelected
+                                    ? '#e3f2fd'
+                                    : '#ffffff',
+                                border: isSelected
+                                  ? '2px solid #1976d2'
+                                  : '2px solid #e0e0e0',
+                                transition: 'all 0.15s ease',
+                              }}
+                            >
+                              <Box sx={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                                {/* 🎯 INPUT HTML NATIVO - è impossibile che non funzioni */}
+                                <input
+                                  type="radio"
+                                  id={`slot-${slot.slot_id}`}
+                                  name="organ_slot_id"
+                                  value={slotIdStr}
+                                  checked={isSelected}
+                                  onChange={() => setSelectedSlot(slotIdStr)}
+                                  disabled={isFull}
+                                  style={{
+                                    marginRight: 12,
+                                    width: 20,
+                                    height: 20,
+                                    cursor: isFull ? 'not-allowed' : 'pointer',
+                                    accentColor: '#1976d2',
+                                  }}
                                 />
-                                <Box sx={{ display: 'flex', gap: 1 }}>
-                                  <Chip
-                                    label={`${slot.quantity} post${slot.quantity > 1 ? 'i' : 'o'}`}
-                                    size="small"
-                                    variant="outlined"
-                                  />
-                                  {slot.confirmed > 0 && (
-                                    <Chip
-                                      label={`${slot.confirmed} confermat${slot.confirmed > 1 ? 'i' : 'o'}`}
-                                      size="small"
-                                      color="success"
-                                    />
-                                  )}
-                                  {slot.pending > 0 && (
-                                    <Chip
-                                      label={`${slot.pending} in attesa`}
-                                      size="small"
-                                      color="warning"
-                                    />
-                                  )}
-                                  {slot.available === 0 && (
-                                    <Chip
-                                      label="Posti esauriti"
-                                      size="small"
-                                      color="default"
-                                    />
-                                  )}
-                                </Box>
+                                <label
+                                  htmlFor={`slot-${slot.slot_id}`}
+                                  style={{
+                                    fontSize: 15,
+                                    color: isFull ? '#9e9e9e' : '#212121',
+                                    fontWeight: isSelected ? 600 : 400,
+                                    cursor: isFull ? 'not-allowed' : 'pointer',
+                                    userSelect: 'none',
+                                  }}
+                                >
+                                  {slot.instrument}
+                                </label>
                               </Box>
-                            );
-                          })}
-                        </Box>
-                      </AccordionDetails>
-                    </Accordion>
-                  );
-                })}
-              </RadioGroup>
-            </FormControl>
+                              <Box sx={{ display: 'flex', gap: 1 }}>
+                                <Chip
+                                  label={`${slot.quantity} post${slot.quantity > 1 ? 'i' : 'o'}`}
+                                  size="small"
+                                  variant="outlined"
+                                />
+                                {slot.confirmed > 0 && (
+                                  <Chip
+                                    label={`${slot.confirmed} confermat${slot.confirmed > 1 ? 'i' : 'o'}`}
+                                    size="small"
+                                    color="success"
+                                  />
+                                )}
+                                {slot.pending > 0 && (
+                                  <Chip
+                                    label={`${slot.pending} in attesa`}
+                                    size="small"
+                                    color="warning"
+                                  />
+                                )}
+                                {slot.available === 0 && (
+                                  <Chip
+                                    label="Posti esauriti"
+                                    size="small"
+                                    color="default"
+                                  />
+                                )}
+                              </Box>
+                            </Box>
+                          );
+                        })}
+                      </Box>
+                    </AccordionDetails>
+                  </Accordion>
+                );
+              })}
+            </Box>
           )}
 
           <Divider sx={{ my: 3 }} />

@@ -120,3 +120,17 @@ check-web.ps1
 *.old
 *.orig
 *.tmp
+
+# Backup e temporanei
+*.bak
+*.bak_*
+*.old
+*.broken_*
+*.pre_*
+backend/data/uploads/
+backend/data/*.bak*
+backend/data/*.pre_*
+backend/data/*.pre-test*
+audit-*.txt
+UtenzeWeb.txt
+h

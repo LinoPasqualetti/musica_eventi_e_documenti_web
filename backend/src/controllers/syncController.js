@@ -10,23 +10,34 @@
  * - Web è master per dati anagrafici (candidate_name, email, slot, time_description)
  * - Flutter è master per status (confirmed/rejected/waitlist)
  * - last-write-wins su updated_at in caso di conflitto
+ *
+ * 🔧 FIX APPLICATE (2026-09-25):
+ * 1. ack: NON tocca più updated_at (evita pull infinito)
+ * 2. push: gestisce correttamente cancelled → deleted_at
+ * 3. push: blocca overbooking (confirmed > quantity)
+ * 4. push: auto-popa confirmed_at/cancelled_at quando mancano
+ * 5. pull: aggiunto limit/offset per paginazione
  */
 
 const { Op } = require('sequelize');
-const { Registration } = require('../models');
+const { Registration, OrganSlot } = require('../models');
 const logger = require('../config/logger');
 
 function nowIso() {
   return new Date().toISOString();
 }
 
+const DEFAULT_PULL_LIMIT = 200;
+
 // ============================================
-// GET /api/registrations/since?timestamp=ISO8601
+// GET /api/registrations/since?timestamp=ISO8601&limit=200&offset=0
 // Pull: candidature modificate dopo <timestamp>
 // ============================================
 exports.pull = async (req, res, next) => {
   try {
     const { timestamp } = req.query;
+    const limit = Math.min(parseInt(req.query.limit, 10) || DEFAULT_PULL_LIMIT, 1000);
+    const offset = parseInt(req.query.offset, 10) || 0;
 
     // Se non c'è timestamp, ritorna TUTTO (per il primo sync)
     const since = timestamp ? new Date(timestamp) : new Date(0);
@@ -34,7 +45,7 @@ exports.pull = async (req, res, next) => {
     // Ritorna candidature:
     // 1. modificate dopo <since>
     // 2. OPPURE mai sincronizzate con Flutter (synced_to_flutter_at IS NULL)
-    const registrations = await Registration.findAll({
+    const { count, rows: registrations } = await Registration.findAndCountAll({
       where: {
         [Op.or]: [
           { updated_at: { [Op.gt]: since.toISOString() } },
@@ -42,18 +53,27 @@ exports.pull = async (req, res, next) => {
         ],
       },
       order: [['updated_at', 'ASC']],
+      limit,
+      offset,
     });
 
-    logger.info(`📤 Pull sync: ${registrations.length} candidature`, {
+    logger.info(`📤 Pull sync: ${registrations.length}/${count} candidature`, {
       correlationId: req.correlationId,
       since: since.toISOString(),
       count: registrations.length,
+      total: count,
+      offset,
+      limit,
     });
 
     res.json({
       serverTime: nowIso(),
       since: since.toISOString(),
       count: registrations.length,
+      total: count,
+      offset,
+      limit,
+      hasMore: offset + registrations.length < count,
       registrations: registrations.map((r) => ({
         id: r.id,
         event_id: r.event_id,
@@ -82,6 +102,8 @@ exports.pull = async (req, res, next) => {
 // POST /api/registrations/ack
 // Body: { ids: [...] }
 // Flutter conferma di aver ricevuto le candidature
+//
+// 🔧 FIX: NON aggiorna più updated_at (evita pull infinito)
 // ============================================
 exports.ack = async (req, res, next) => {
   try {
@@ -93,7 +115,7 @@ exports.ack = async (req, res, next) => {
 
     const now = nowIso();
     const [updated] = await Registration.update(
-      { synced_to_flutter_at: now, updated_at: now },
+      { synced_to_flutter_at: now },   // ← solo questo, NON updated_at
       { where: { id: ids } }
     );
 
@@ -112,6 +134,11 @@ exports.ack = async (req, res, next) => {
 // POST /api/registrations/push
 // Body: { registrations: [{ id, status, time_description, admin_notes, updated_at }] }
 // Flutter invia modifiche fatte in locale
+//
+// 🔧 FIX:
+// 1. Gestisce cancelled → cancelled_at + deleted_at
+// 2. Auto-popa confirmed_at quando manca
+// 3. Blocca overbooking (confirmed > quantity)
 // ============================================
 exports.push = async (req, res, next) => {
   try {
@@ -146,9 +173,56 @@ exports.push = async (req, res, next) => {
           continue;
         }
 
-        // Aggiorna solo i campi che l'admin può modificare
+        // Determina se stiamo cambiando status (per gestire confirmed/cancelled)
+        const newStatus = item.status ?? existing.status;
+        const statusChanged = newStatus !== existing.status;
+
+        // 🔒 FIX 3: blocca overbooking se stiamo confermando
+        if (statusChanged && newStatus === 'confirmed' && existing.organ_slot_id) {
+          const slot = await OrganSlot.findByPk(existing.organ_slot_id);
+
+          if (!slot) {
+            // slot orfano: rifiuta la conferma
+            results.push({
+              id: item.id,
+              status: 'error',
+              error: 'slot_not_found',
+              organ_slot_id: existing.organ_slot_id,
+            });
+            continue;
+          }
+
+          const confirmedCount = await Registration.count({
+            where: {
+              organ_slot_id: existing.organ_slot_id,
+              status: 'confirmed',
+              deleted_at: null,
+              id: { [Op.ne]: item.id },
+            },
+          });
+
+          if (confirmedCount >= slot.quantity) {
+            logger.warn('⛔ Push rifiutato: slot pieno', {
+              correlationId: req.correlationId,
+              registrationId: item.id,
+              organ_slot_id: existing.organ_slot_id,
+              confirmedCount,
+              quantity: slot.quantity,
+            });
+            results.push({
+              id: item.id,
+              status: 'error',
+              error: 'slot_full',
+              confirmedCount,
+              quantity: slot.quantity,
+            });
+            continue;
+          }
+        }
+
+        // Costruisci updates
         const updates = {
-          status: item.status ?? existing.status,
+          status: newStatus,
           updated_at: item.updated_at || now,
         };
 
@@ -168,7 +242,25 @@ exports.push = async (req, res, next) => {
           updates.deleted_at = item.deleted_at;
         }
 
+        // 🔒 FIX 2: coerenza cancelled → cancelled_at + deleted_at
+        if (updates.status === 'cancelled') {
+          if (!updates.cancelled_at && !existing.cancelled_at) {
+            updates.cancelled_at = now;
+          }
+          if (!updates.deleted_at && !existing.deleted_at) {
+            updates.deleted_at = now;
+          }
+        }
+
+        // 🔒 FIX 4: auto-popa confirmed_at quando si passa a confirmed
+        if (updates.status === 'confirmed' && statusChanged) {
+          if (!updates.confirmed_at && !existing.confirmed_at) {
+            updates.confirmed_at = now;
+          }
+        }
+
         await existing.update(updates);
+
         results.push({
           id: item.id,
           status: 'updated',

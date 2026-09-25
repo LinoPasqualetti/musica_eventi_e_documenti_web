@@ -73,27 +73,44 @@ export default function AppHeader() {
                 </Typography>
               </MenuItem>
               <Divider />
-              <MenuItem
-                onClick={() => {
-                  handleCloseMenu();
-                  navigate('/profile');
-                }}
-              >
+
               <MenuItem
                 onClick={() => {
                   handleCloseMenu();
                   navigate('/mie-candidature');
                 }}
               >
-                <ListAltIcon fontSize="small" sx={{ mr: 1 }} />
-                Le mie candidature
+                <ListAltIcon fontSize="small" sx={{ mr: 1.5, color: 'primary.main' }} />
+                <Box>
+                  <Typography variant="body2">Le mie candidature</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Gestisci le tue candidature
+                  </Typography>
+                </Box>
               </MenuItem>
-                <PersonIcon fontSize="small" sx={{ mr: 1 }} />
-                Profilo
+
+              <Divider />
+
+              <MenuItem
+                onClick={() => {
+                  handleCloseMenu();
+                  navigate('/profile');
+                }}
+              >
+                <PersonIcon fontSize="small" sx={{ mr: 1.5, color: 'primary.main' }} />
+                <Box>
+                  <Typography variant="body2">Profilo</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Modifica i tuoi dati
+                  </Typography>
+                </Box>
               </MenuItem>
+
+              <Divider />
+
               <MenuItem onClick={handleLogout}>
-                <LogoutIcon fontSize="small" sx={{ mr: 1 }} />
-                Esci
+                <LogoutIcon fontSize="small" sx={{ mr: 1.5, color: 'error.main' }} />
+                <Typography variant="body2" color="error">Esci</Typography>
               </MenuItem>
             </Menu>
           </>

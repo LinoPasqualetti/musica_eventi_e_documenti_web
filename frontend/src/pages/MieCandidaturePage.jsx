@@ -25,7 +25,9 @@ export default function MieCandidaturePage() {
     setLoading(true);
     try {
       const res = await registrationService.getMine();
-      setRegistrations(res.data.registrations || []);
+      // Il backend restituisce direttamente un array
+      const data = Array.isArray(res.data) ? res.data : (res.data.registrations || []);
+      setRegistrations(data);
       setLoading(false);
     } catch (e) {
       setError(e.response?.data?.error || 'Errore nel caricamento');
@@ -34,15 +36,39 @@ export default function MieCandidaturePage() {
   };
 
   useEffect(() => {
-    // Mostra messaggio di successo se arriva ?created=1
+    // Il messaggio viene personalizzato dopo il caricamento
     const params = new URLSearchParams(window.location.search);
     if (params.get('created') === '1') {
-      setSuccessMsg('Candidatura inviata con successo!');
       // Rimuove il parametro dall'URL
       window.history.replaceState({}, '', '/mie-candidature');
     }
     load();
   }, []);
+
+  // Personalizza il messaggio quando le candidature sono caricate
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const created = params.get('created');
+
+    // Nessuna candidatura ancora caricata: esci
+    if (registrations.length === 0) return;
+
+    // Mostra il messaggio solo se è arrivato ?created=1 o se già c'è un successo
+    if (created !== '1' && !successMsg) return;
+
+    // Prendi la candidatura più recente (prima, ordinate DESC)
+    const latest = registrations[0];
+
+    // Ricava il nome
+    const nome = latest.candidate_name || latest.candidateName || 'utente';
+
+    // Ricava il brano
+    const brano = latest.eventSong?.song?.title
+      || latest.event?.title
+      || 'questo brano';
+
+    setSuccessMsg(`Candidatura di ${nome} per il brano "${brano}" inviata con successo!`);
+  }, [registrations]);
 
   const handleWithdraw = async (id) => {
     if (!window.confirm('Vuoi ritirare questa candidatura?')) return;
@@ -119,7 +145,22 @@ export default function MieCandidaturePage() {
                   <Divider sx={{ my: 1 }} />
 
                   <Typography variant="body2" sx={{ mb: 0.5 }}>
-                    🎼 <strong>Slot:</strong> {r.organ_slot_id || '—'}
+                    🎼 <strong>Brano:</strong>{' '}
+                    {r.organSlot?.organ?.eventSong?.song?.title
+                      || r.song?.title
+                      || r.eventSong?.song?.title
+                      || '—'}
+                  </Typography>
+
+                  <Typography variant="body2" sx={{ mb: 0.5 }}>
+                    🎭 <strong>Evento:</strong>{' '}
+                    {r.event?.title
+                      || r.organSlot?.organ?.eventSong?.event?.title
+                      || '—'}
+                  </Typography>
+
+                  <Typography variant="body2" sx={{ mb: 0.5 }}>
+                    🎺 <strong>Strumento:</strong> {r.organSlot?.instrument || '—'}
                   </Typography>
                   {r.time_description && (
                     <Typography variant="body2" sx={{ mb: 0.5 }}>

@@ -1,3 +1,18 @@
+/**
+ * 📁 PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\models\EventSong.js
+ *
+ * 📝 DESCRIZIONE: Modello EventSong - rappresenta la relazione tra un Event e una Song
+ * (un evento può avere più brani, un brano può essere in più eventi)
+ *
+ * 🔧 FIX APPLICATE (2026-09-24):
+ * - Aggiunto blocco `associate` con le relazioni mancanti:
+ *   - belongsTo(Song) → per accedere a `eventSong.song`
+ *   - belongsTo(Event) → per accedere a `eventSong.event`
+ *   - hasMany(Organ) → per accedere a `eventSong.organs`
+ *   Questo permette gli include annidati senza errori
+ *   "Song is not associated to EventSong"
+ */
+
 const { DataTypes } = require('sequelize');
 
 module.exports = (sequelize) => {
@@ -45,6 +60,29 @@ module.exports = (sequelize) => {
     timestamps: false,
     underscored: true
   });
+
+  // ============================================
+  // 🔗 ASSOCIAZIONI
+  // ============================================
+  EventSong.associate = (models) => {
+    // EventSong → Song (un evento-canzone appartiene a UNA canzone)
+    EventSong.belongsTo(models.Song, {
+      foreignKey: 'song_id',
+      as: 'song',
+    });
+
+    // EventSong → Event (un evento-canzone appartiene a UN evento)
+    EventSong.belongsTo(models.Event, {
+      foreignKey: 'event_id',
+      as: 'event',
+    });
+
+    // EventSong → Organ (un evento-canzone può avere PIÙ organici)
+    EventSong.hasMany(models.Organ, {
+      foreignKey: 'event_song_id',
+      as: 'organs',
+    });
+  };
 
   return EventSong;
 };

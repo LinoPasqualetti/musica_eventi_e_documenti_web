@@ -1,195 +1,286 @@
-// backend/src/controllers/registrationController.js
-/**
- * Controller per la gestione delle registrazioni utenti agli eventi.
+﻿/**
+ * 📁 PERCORSO: C:\musica_eventi_e_documenti_web\backend\src\controllers\registrationController.js
  *
- * ─── Ciclo di vita LEGACY (status vecchi) ────────────────────────
- *   pending   -> exported  (script export)
- *   exported  -> imported  (script import sul desktop)
- *   imported  -> validated | rejected  (admin, sul desktop)
- *   validated -> published  (script publish)
- *   rejected  -> published  (script publish)
+ * 📝 DESCRIZIONE: Controller per la gestione delle candidature (registrations)
  *
- * ─── Ciclo di vita NUOVO (organico) ──────────────────────────────
- *   pending   -> confirmed | rejected | waitlist
- *   (gestito su Flutter via sync)
+ * 🔧 FIX APPLICATE:
+ * - 2026-09-24: Ricava event_id dalla catena organ_slot → organ → event_song,
+ *               supporto guest, findOrCreate utente guest, status validi,
+ *               rimosse markExported/markPublished, created_at esplicito
+ * - 2026-09-25: Coerenza di stato:
+ *               * deleteRegistration aggiorna anche status='cancelled' + cancelled_at
+ *               * updateStatus quando status='cancelled' imposta anche deleted_at
  */
 
-const { Op, fn, col } = require('sequelize');
-const { Registration, Event, User, Song, Organ, OrganSlot, EventSong } = require('../models');
+const { Registration, User, OrganSlot, Organ, EventSong, Event, Song } = require('../models');
+const logger = require('../config/logger');
+const { v4: uuidv4 } = require('uuid');
+const { Op } = require('sequelize');
+
+// Status validi secondo il modello
+const VALID_STATUSES = ['pending', 'waitlist', 'confirmed', 'rejected', 'cancelled'];
 
 /**
- * Genera un ID univoco (vecchio stile numerico).
+ * 🔑 HELPER: Ricava event_id e song_id da un organ_slot_id
+ * Catena: organ_slot → organ → event_song → { event_id, song_id }
  */
-function generaId() {
-  return Date.now().toString() + Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-}
+async function resolveEventInfoFromOrganSlot(organSlotId) {
+  const organSlot = await OrganSlot.findByPk(organSlotId, {
+    include: [
+      {
+        model: Organ,
+        as: 'organ',
+        required: true,
+        include: [
+          {
+            model: EventSong,
+            as: 'eventSong',
+            required: true,
+          },
+        ],
+      },
+    ],
+  });
 
-/**
- * Genera un ID per nuove candidature (stile reg_*).
- */
-function generateRegId() {
-  return `reg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-}
+  if (!organSlot) {
+    return { error: `Organ slot "${organSlotId}" non trovato`, status: 404 };
+  }
+  if (!organSlot.organ) {
+    return { error: `Organ collegato allo slot "${organSlotId}" non trovato`, status: 404 };
+  }
+  if (!organSlot.organ.eventSong) {
+    return { error: `EventSong collegato all'organ "${organSlot.organ.id}" non trovato`, status: 404 };
+  }
 
-function nowIso() {
-  return new Date().toISOString();
+  return {
+    organSlot,
+    organ: organSlot.organ,
+    eventSong: organSlot.organ.eventSong,
+    event_id: organSlot.organ.eventSong.event_id,
+    song_id: organSlot.organ.eventSong.song_id,
+  };
 }
-
-// ============================================
-// FUNZIONI LEGACY (mantenute)
-// ============================================
 
 /**
  * POST /api/registrations
- * Crea una nuova registrazione (NUOVO: accetta organ_slot_id + candidate_name).
- * Se il body contiene `organ_slot_id` → modalità "candidatura organico".
- * Se contiene `event_id` + `user_id` → modalità legacy.
+ * Crea una nuova candidatura (utente autenticato o guest).
  */
 exports.createRegistration = async (req, res, next) => {
   try {
     const {
-      // Nuovo schema
       organ_slot_id,
       candidate_name,
       candidate_email,
       time_description,
-      // Legacy
-      event_id,
-      user_id,
-      instrument_choice,
-      reading_level,
-      improvisation_level,
-      selected_song_ids,
-      notes
+      notes,
+      // Accetta anche camelCase
+      organSlotId,
+      candidateName,
+      candidateEmail,
+      timeDescription,
     } = req.body;
 
-    // ─── Modalità NUOVA (organ_slot_id) ───────────────────────────
-    if (organ_slot_id) {
-      // L'utente deve essere loggato
-      if (!req.user) {
-        const err = new Error('Autenticazione richiesta per candidarsi');
-        err.status = 401;
+    const finalOrganSlotId = organ_slot_id || organSlotId;
+    const finalCandidateName = candidate_name || candidateName;
+    const finalCandidateEmail = candidate_email || candidateEmail;
+    const finalTimeDescription = time_description || timeDescription;
+
+    // 🔑 Validazione campi obbligatori
+    if (!finalOrganSlotId) {
+      const err = new Error('organ_slot_id è obbligatorio');
+      err.status = 400;
+      return next(err);
+    }
+    // time_description è opzionale: default "Tutto il brano"
+
+    // 🔑 Ricava event_id/song_id dallo slot (OBBLIGATORIO perché event_id è NOT NULL)
+    const resolved = await resolveEventInfoFromOrganSlot(finalOrganSlotId);
+    if (resolved.error) {
+      const err = new Error(resolved.error);
+      err.status = resolved.status;
+      return next(err);
+    }
+
+    const { event_id, song_id, organSlot } = resolved;
+
+    // 🔑 Determina user_id e dati candidato
+    let userId = req.user ? req.user.id : null;
+    let resolvedCandidateName = finalCandidateName;
+    let resolvedCandidateEmail = finalCandidateEmail;
+
+    if (userId) {
+      // Caso 1: Utente autenticato
+      const user = await User.findByPk(userId);
+      if (!user) {
+        const err = new Error(`Utente autenticato ${userId} non trovato`);
+        err.status = 404;
         return next(err);
       }
+      resolvedCandidateName = resolvedCandidateName || user.full_name;
+      resolvedCandidateEmail = resolvedCandidateEmail || user.email;
 
-      if (!candidate_name || candidate_name.trim() === '') {
-        const err = new Error('candidate_name è obbligatorio');
+      logger.info('👤 Candidatura da utente autenticato', {
+        correlationId: req.correlationId,
+        userId,
+        organSlotId: finalOrganSlotId,
+        eventId: event_id,
+      });
+    } else {
+      // Caso 2: Utente guest
+      if (!finalCandidateName || !finalCandidateEmail) {
+        const err = new Error(
+          'Per candidarsi senza account, "candidate_name" e "candidate_email" sono obbligatori'
+        );
         err.status = 400;
         return next(err);
       }
 
-      const slot = await OrganSlot.findOne({
-        where: { id: organ_slot_id, deleted_at: null },
-        include: [
-          {
-            model: Organ,
-            as: 'organ',
-            where: { deleted_at: null },
-            required: true,
-            include: [
-              {
-                model: EventSong,
-                as: 'eventSong',
-                required: true,
-                attributes: ['id', 'event_id', 'song_id'],
-              },
-            ],
-          },
-        ],
-      });
-
-      if (!slot) {
-        const err = new Error('Slot non trovato o non disponibile');
-        err.status = 404;
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(finalCandidateEmail)) {
+        const err = new Error('Formato email non valido');
+        err.status = 400;
         return next(err);
       }
 
-      const eventSong = slot.organ.eventSong;
+      // Trova o crea utente guest
+      let guestUser = await User.findOne({ where: { email: finalCandidateEmail } });
 
-      // Verifica unicità (user_id + candidate_name + organ_slot_id)
-      const existing = await Registration.findOne({
-        where: {
-          user_id: req.user.id,
-          candidate_name: candidate_name.trim(),
-          organ_slot_id,
-          deleted_at: null,
-        },
-      });
+      if (!guestUser) {
+        const now = new Date().toISOString();
 
-      if (existing) {
-        const err = new Error('Esiste già una candidatura con questo nome per questo slot');
-        err.status = 409;
-        return next(err);
+        const bcrypt = require('bcryptjs');
+        const randomPassword = uuidv4() + uuidv4();
+        const passwordHash = await bcrypt.hash(randomPassword, 10);
+
+        guestUser = await User.create({
+          id: uuidv4(),
+          email: finalCandidateEmail,
+          full_name: finalCandidateName,
+          password_hash: passwordHash,
+          role: 'user',
+          status: 'active',
+          created_at: now,
+          updated_at: now,
+        });
+
+        logger.info('👤 Nuovo utente guest creato (role=user, password random)', {
+          correlationId: req.correlationId,
+          email: finalCandidateEmail,
+          userId: guestUser.id,
+        });
       }
 
-      const registration = await Registration.create({
-        id: generateRegId(),
-        event_id: eventSong.event_id,
-        user_id: req.user.id,
-        song_id: eventSong.song_id,
-        organ_slot_id,
-        candidate_name: candidate_name.trim(),
-        candidate_email: candidate_email ? candidate_email.trim() : null,
-        time_description: time_description ? time_description.trim() : null,
-        notes: notes || null,
-        status: 'pending',
-        created_at: nowIso(),
-        updated_at: nowIso(),
-      });
-
-      return res.status(201).json(registration);
+      userId = guestUser.id;
+      resolvedCandidateName = finalCandidateName;
+      resolvedCandidateEmail = finalCandidateEmail;
     }
 
-    // ─── Modalità LEGACY (event_id + user_id) ─────────────────────
-    if (!event_id || !user_id) {
-      const err = new Error('event_id e user_id sono obbligatori (o usa organ_slot_id)');
-      err.status = 400;
-      return next(err);
-    }
-
-    const evento = await Event.findByPk(event_id);
-    if (!evento) {
-      const err = new Error(`Evento ${event_id} non trovato`);
-      err.status = 404;
-      return next(err);
-    }
-
-    const registration = await Registration.create({
-      id: generaId(),
-      event_id,
-      user_id,
-      status: 'pending',
-      instrument_choice: instrument_choice || null,
-      reading_level: reading_level || 1,
-      improvisation_level: improvisation_level || 1,
-      selected_song_ids: Array.isArray(selected_song_ids)
-        ? selected_song_ids.join(',')
-        : (selected_song_ids || null),
-      notes: notes || null,
-      created_at: nowIso(),
+    // 🔑 Previeni duplicati (stesso utente + stesso slot)
+    const existingRegistration = await Registration.findOne({
+      where: {
+        user_id: userId,
+        organ_slot_id: finalOrganSlotId,
+      },
     });
 
-    res.status(201).json(registration);
+    if (existingRegistration) {
+      const err = new Error(
+        `Esiste già una candidatura per questo slot (id: ${existingRegistration.id})`
+      );
+      err.status = 409;
+      return next(err);
+    }
+
+    // 🔑 Crea la candidatura
+    const now = new Date().toISOString();
+    const registration = await Registration.create({
+      id: uuidv4(),
+      event_id: event_id,
+      user_id: userId,
+      song_id: song_id || null,
+      organ_slot_id: finalOrganSlotId,
+      candidate_name: resolvedCandidateName,
+      candidate_email: resolvedCandidateEmail,
+      time_description: finalTimeDescription || 'Tutto il brano',
+      notes: notes || null,
+      status: 'pending',
+      created_at: now,
+      updated_at: now,
+    });
+
+    logger.info('✅ Candidatura creata', {
+      correlationId: req.correlationId,
+      registrationId: registration.id,
+      userId,
+      eventId: event_id,
+      organSlotId: finalOrganSlotId,
+      candidateName: resolvedCandidateName,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Candidatura inviata con successo',
+      data: registration,
+    });
   } catch (error) {
+    logger.error('❌ Errore in createRegistration', {
+      correlationId: req.correlationId,
+      error: error.message,
+      stack: error.stack,
+    });
     next(error);
   }
 };
 
 /**
  * GET /api/registrations
- * Elenco registrazioni, con filtri opzionali.
- * Query params: ?status=pending&event_id=xxx&user_id=yyy
+ * Lista di tutte le candidature (admin).
  */
-exports.getRegistrations = async (req, res, next) => {
+exports.getAllRegistrations = async (req, res, next) => {
   try {
+    const { status, event_id, limit = 500, offset = 0 } = req.query;
+
     const where = {};
-    if (req.query.status)   where.status   = req.query.status;
-    if (req.query.event_id) where.event_id = req.query.event_id;
-    if (req.query.user_id)  where.user_id  = req.query.user_id;
+    if (status) where.status = status;
+    if (event_id) where.event_id = event_id;
 
     const registrations = await Registration.findAll({
       where,
-      order: [['created_at', 'DESC']]
+      order: [['created_at', 'DESC']],
+      limit: parseInt(limit, 10),
+      offset: parseInt(offset, 10),
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'email', 'full_name', 'role'],
+          required: false,
+        },
+        {
+          model: Event,
+          as: 'event',
+          required: false,
+        },
+        {
+          model: OrganSlot,
+          as: 'organSlot',
+          required: false,
+          include: [
+            {
+              model: Organ,
+              as: 'organ',
+              required: false,
+              include: [
+                {
+                  model: EventSong,
+                  as: 'eventSong',
+                  required: false,
+                },
+              ],
+            },
+          ],
+        },
+      ],
     });
 
     res.json(registrations);
@@ -199,223 +290,7 @@ exports.getRegistrations = async (req, res, next) => {
 };
 
 /**
- * GET /api/registrations/:id
- */
-exports.getRegistrationById = async (req, res, next) => {
-  try {
-    const registration = await Registration.findByPk(req.params.id);
-    if (!registration) {
-      const err = new Error(`Registration ${req.params.id} non trovata`);
-      err.status = 404;
-      return next(err);
-    }
-    res.json(registration);
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * PUT /api/registrations/:id/status
- * Aggiorna lo status (usato da admin e dagli script di sync).
- */
-exports.updateStatus = async (req, res, next) => {
-  try {
-    const { status, admin_notes, confirmed_at, cancelled_at } = req.body;
-
-    const validStatus = [
-      'pending', 'exported', 'imported', 'validated', 'rejected', 'published',
-      'confirmed', 'waitlist', 'cancelled',
-    ];
-    if (!status || !validStatus.includes(status)) {
-      const err = new Error(`Status non valido. Valori ammessi: ${validStatus.join(', ')}`);
-      err.status = 400;
-      return next(err);
-    }
-
-    const registration = await Registration.findByPk(req.params.id);
-    if (!registration) {
-      const err = new Error(`Registration ${req.params.id} non trovata`);
-      err.status = 404;
-      return next(err);
-    }
-
-    registration.status = status;
-    if (admin_notes !== undefined) registration.admin_notes = admin_notes;
-    if (confirmed_at !== undefined) registration.confirmed_at = confirmed_at;
-    if (cancelled_at !== undefined) registration.cancelled_at = cancelled_at;
-    registration.updated_at = nowIso();
-
-    await registration.save();
-    res.json(registration);
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * POST /api/registrations/mark-exported
- */
-exports.markExported = async (req, res, next) => {
-  try {
-    const { ids } = req.body;
-    if (!Array.isArray(ids) || ids.length === 0) {
-      const err = new Error('ids deve essere un array non vuoto');
-      err.status = 400;
-      return next(err);
-    }
-
-    const [updated] = await Registration.update(
-      { status: 'exported', updated_at: nowIso() },
-      { where: { id: ids, status: 'pending' } }
-    );
-
-    res.json({ updated });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * POST /api/registrations/mark-published
- */
-exports.markPublished = async (req, res, next) => {
-  try {
-    const { ids } = req.body;
-    if (!Array.isArray(ids) || ids.length === 0) {
-      const err = new Error('ids deve essere un array non vuoto');
-      err.status = 400;
-      return next(err);
-    }
-
-    const [updated] = await Registration.update(
-      { status: 'published', updated_at: nowIso() },
-      { where: { id: ids, status: ['validated', 'rejected'] } }
-    );
-
-    res.json({ updated });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * GET /api/registrations/stats
- */
-exports.getStats = async (req, res, next) => {
-  try {
-    const all = await Registration.findAll();
-    const byStatus = {};
-    const byEvent = {};
-
-    all.forEach(r => {
-      byStatus[r.status] = (byStatus[r.status] || 0) + 1;
-      byEvent[r.event_id] = (byEvent[r.event_id] || 0) + 1;
-    });
-
-    res.json({
-      total: all.length,
-      byStatus,
-      byEvent
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// ============================================
-// FUNZIONI NUOVE (organico)
-// ============================================
-
-/**
- * GET /api/registrations/slots-availability/:eventSongId
- * Pubblico - ritorna conteggi aggregati per ogni slot.
- */
-exports.getSlotsAvailability = async (req, res, next) => {
-  try {
-    const { eventSongId } = req.params;
-
-    const eventSong = await EventSong.findByPk(eventSongId, {
-      attributes: ['id', 'event_id', 'song_id'],
-    });
-    if (!eventSong) {
-      const err = new Error(`EventSong ${eventSongId} not found`);
-      err.status = 404;
-      return next(err);
-    }
-
-    // Carica organico + slot
-    const organ = await Organ.findOne({
-      where: { event_song_id: eventSongId, deleted_at: null },
-      include: [
-        {
-          model: OrganSlot,
-          as: 'slots',
-          where: { deleted_at: null },
-          required: false,
-        },
-      ],
-    });
-
-    const slots = organ ? (organ.slots || []) : [];
-    const slotIds = slots.map((s) => s.id);
-
-    // Conta candidature per slot/status
-    let counts = [];
-    if (slotIds.length > 0) {
-      counts = await Registration.findAll({
-        where: {
-          organ_slot_id: { [Op.in]: slotIds },
-          deleted_at: null,
-        },
-        attributes: [
-          'organ_slot_id',
-          'status',
-          [fn('COUNT', col('id')), 'count'],
-        ],
-        group: ['organ_slot_id', 'status'],
-        raw: true,
-      });
-    }
-
-    const bySlot = {};
-    for (const c of counts) {
-      if (!bySlot[c.organ_slot_id]) {
-        bySlot[c.organ_slot_id] = { confirmed: 0, pending: 0, waitlist: 0, rejected: 0 };
-      }
-      const cnt = parseInt(c.count, 10) || 0;
-      if (bySlot[c.organ_slot_id][c.status] !== undefined) {
-        bySlot[c.organ_slot_id][c.status] = cnt;
-      }
-    }
-
-    res.json({
-      eventSongId,
-      songId: eventSong.song_id,
-      slots: slots.map((s) => {
-        const c = bySlot[s.id] || { confirmed: 0, pending: 0, waitlist: 0, rejected: 0 };
-        const available = Math.max(0, s.quantity - c.confirmed);
-        return {
-          id: s.id,
-          section: s.section,
-          instrument: s.instrument,
-          quantity: s.quantity,
-          notes: s.notes,
-          confirmed: c.confirmed,
-          pending: c.pending,
-          waitlist: c.waitlist,
-          available,
-        };
-      }),
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
  * GET /api/registrations/me
- * Autenticato - le candidature dell'utente loggato (nuovo schema).
  */
 exports.getMyRegistrations = async (req, res, next) => {
   try {
@@ -426,53 +301,176 @@ exports.getMyRegistrations = async (req, res, next) => {
     }
 
     const registrations = await Registration.findAll({
-      where: { user_id: req.user.id, deleted_at: null },
+      where: {
+        user_id: req.user.id,
+        deleted_at: null,
+      },
       order: [['created_at', 'DESC']],
+      include: [
+        {
+          model: Event,
+          as: 'event',
+          required: false,
+        },
+        {
+          model: Song,
+          as: 'song',
+          required: false,
+        },
+        {
+          model: OrganSlot,
+          as: 'organSlot',
+          required: false,
+          include: [
+            {
+              model: Organ,
+              as: 'organ',
+              required: false,
+              include: [
+                {
+                  model: EventSong,
+                  as: 'eventSong',
+                  required: false,
+                  include: [
+                    { model: Song, as: 'song', required: false },
+                    { model: Event, as: 'event', required: false },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
     });
 
-    res.json({ registrations });
+    logger.info(`📋 getMyRegistrations: ${registrations.length} candidature per utente ${req.user.id}`, {
+      correlationId: req.correlationId,
+    });
+
+    res.json(registrations);
+  } catch (error) {
+    logger.error('❌ Errore in getMyRegistrations', {
+      correlationId: req.correlationId,
+      error: error.message,
+      stack: error.stack,
+    });
+    next(error);
+  }
+};
+
+/**
+ * GET /api/registrations/stats
+ */
+exports.getStats = async (req, res, next) => {
+  try {
+    const stats = {};
+    for (const s of VALID_STATUSES) {
+      stats[s] = await Registration.count({ where: { status: s } });
+    }
+    stats.total = await Registration.count();
+
+    res.json(stats);
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * DELETE /api/registrations/:id
- * Soft delete con owner check (sostituisce il vecchio hard delete).
+ * GET /api/registrations/:id
  */
-exports.deleteRegistration = async (req, res, next) => {
+exports.getRegistration = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const registration = await Registration.findOne({
-      where: { id, deleted_at: null },
+    const registration = await Registration.findByPk(id, {
+      include: [
+        { model: User, as: 'user', required: false },
+        { model: Event, as: 'event', required: false },
+        {
+          model: OrganSlot,
+          as: 'organSlot',
+          required: false,
+          include: [
+            {
+              model: Organ,
+              as: 'organ',
+              required: false,
+              include: [{ model: EventSong, as: 'eventSong', required: false }],
+            },
+          ],
+        },
+      ],
     });
+
     if (!registration) {
       const err = new Error(`Registration ${id} non trovata`);
       err.status = 404;
       return next(err);
     }
 
-    // Owner check: solo chi l'ha creata (o admin) può cancellarla
-    if (req.user && registration.user_id !== req.user.id && req.user.role !== 'admin') {
-      const err = new Error('Non puoi cancellare questa candidatura');
-      err.status = 403;
-      return next(err);
-    }
+    res.json(registration);
+  } catch (error) {
+    next(error);
+  }
+};
 
-    // Le candidature confermate/rifiutate non si cancellano
-    if (registration.status === 'confirmed' || registration.status === 'rejected') {
-      const err = new Error('Non puoi ritirare una candidatura già processata');
+/**
+ * PUT /api/registrations/:id/status
+ * Aggiorna lo stato di una candidatura (admin).
+ *
+ * 🔒 FIX 2026-09-25: quando status='cancelled', imposta anche deleted_at per coerenza
+ */
+exports.updateStatus = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { status, admin_notes } = req.body;
+
+    if (!status) {
+      const err = new Error('status è obbligatorio');
       err.status = 400;
       return next(err);
     }
 
-    await registration.update({
-      deleted_at: nowIso(),
-      updated_at: nowIso(),
+    if (!VALID_STATUSES.includes(status)) {
+      const err = new Error(
+        `status non valido. Valori ammessi: ${VALID_STATUSES.join(', ')}`
+      );
+      err.status = 400;
+      return next(err);
+    }
+
+    const registration = await Registration.findByPk(id);
+
+    if (!registration) {
+      const err = new Error(`Registration ${id} non trovata`);
+      err.status = 404;
+      return next(err);
+    }
+
+    const now = new Date().toISOString();
+
+    registration.status = status;
+    if (admin_notes !== undefined) {
+      registration.admin_notes = admin_notes;
+    }
+    if (status === 'confirmed' && !registration.confirmed_at) {
+      registration.confirmed_at = now;
+    }
+    if (status === 'cancelled') {
+      if (!registration.cancelled_at) registration.cancelled_at = now;
+      // 🔒 Coerenza: cancelled → deleted_at
+      if (!registration.deleted_at) registration.deleted_at = now;
+    }
+    registration.updated_at = now;
+    await registration.save();
+
+    logger.info('✅ Stato candidatura aggiornato', {
+      correlationId: req.correlationId,
+      registrationId: id,
+      newStatus: status,
     });
 
-    res.json({ deleted: true, id });
+    res.json(registration);
   } catch (error) {
     next(error);
   }
@@ -480,42 +478,250 @@ exports.deleteRegistration = async (req, res, next) => {
 
 /**
  * GET /api/events/:eventId/registrations
- * Admin - tutte le candidature dell'evento (nuovo schema).
+ * Admin - tutte le candidature di un evento specifico.
  */
 exports.getRegistrationsByEvent = async (req, res, next) => {
   try {
     const { eventId } = req.params;
 
-    const eventSongs = await EventSong.findAll({
-      where: { event_id: eventId },
-      attributes: ['song_id'],
-      raw: true,
-    });
-
-    const songIds = [...new Set(eventSongs.map((es) => es.song_id))];
-    if (songIds.length === 0) {
-      return res.json({ registrations: [] });
+    if (!eventId) {
+      const err = new Error('eventId è obbligatorio');
+      err.status = 400;
+      return next(err);
     }
 
     const registrations = await Registration.findAll({
-      where: {
-        song_id: { [Op.in]: songIds },
-        deleted_at: null,
-      },
+      where: { event_id: eventId },
+      order: [['created_at', 'DESC']],
       include: [
-        { model: User, as: 'user', attributes: ['id', 'full_name', 'email'] },
-        { model: Song, as: 'song', attributes: ['id', 'title', 'composer'] },
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'email', 'full_name', 'role'],
+          required: false,
+        },
+        {
+          model: Event,
+          as: 'event',
+          required: false,
+        },
         {
           model: OrganSlot,
           as: 'organSlot',
-          attributes: ['id', 'section', 'instrument', 'quantity'],
+          required: false,
+          include: [
+            {
+              model: Organ,
+              as: 'organ',
+              required: false,
+              include: [
+                {
+                  model: EventSong,
+                  as: 'eventSong',
+                  required: false,
+                },
+              ],
+            },
+          ],
         },
       ],
-      order: [['created_at', 'DESC']],
     });
 
-    res.json({ registrations });
+    logger.info(`📋 Candidature per evento ${eventId}: ${registrations.length}`, {
+      correlationId: req.correlationId,
+      eventId,
+      count: registrations.length,
+    });
+
+    res.json(registrations);
+  } catch (error) {
+    logger.error('❌ Errore in getRegistrationsByEvent', {
+      correlationId: req.correlationId,
+      error: error.message,
+      stack: error.stack,
+    });
+    next(error);
+  }
+};
+
+// ============================================
+// 🔧 FUNZIONI AGGIUNTE (2026-09-24) - Route mancanti
+// ============================================
+
+/**
+ * GET /api/registrations/slots-availability/:eventSongId
+ * Conteggi di disponibilità per ogni slot dell'organico di un evento-canzone.
+ */
+exports.getSlotsAvailability = async (req, res, next) => {
+  try {
+    const { eventSongId } = req.params;
+
+    if (!eventSongId) {
+      const err = new Error('eventSongId è obbligatorio');
+      err.status = 400;
+      return next(err);
+    }
+
+    const organs = await Organ.findAll({
+      where: { event_song_id: eventSongId },
+      include: [{ model: OrganSlot, as: 'slots', required: false }],
+    });
+
+    if (organs.length === 0) {
+      return res.json({ eventSongId, slots: [] });
+    }
+
+    const allSlots = [];
+    organs.forEach(org => {
+      (org.slots || []).forEach(slot => {
+        allSlots.push({
+          slot_id: slot.id,
+          organ_id: slot.organ_id,
+          instrument: slot.instrument,
+          section: slot.section,
+          quantity: slot.quantity,
+          order_index: slot.order_index,
+        });
+      });
+    });
+
+    const slotIds = allSlots.map(s => s.slot_id);
+    const registrations = await Registration.findAll({
+      where: {
+        organ_slot_id: { [Op.in]: slotIds },
+        status: { [Op.in]: ['pending', 'confirmed'] },
+        deleted_at: null,
+      },
+      attributes: ['organ_slot_id'],
+    });
+
+    const countBySlot = {};
+    registrations.forEach(r => {
+      countBySlot[r.organ_slot_id] = (countBySlot[r.organ_slot_id] || 0) + 1;
+    });
+
+    const result = allSlots.map(slot => {
+      const registered = countBySlot[slot.slot_id] || 0;
+      return {
+        ...slot,
+        registered,
+        available: Math.max(0, slot.quantity - registered),
+      };
+    });
+
+    logger.debug('getSlotsAvailability', {
+      correlationId: req.correlationId,
+      eventSongId,
+      slots: result.length,
+    });
+
+    res.json({ eventSongId, slots: result });
+  } catch (error) {
+    logger.error('❌ Errore in getSlotsAvailability', {
+      correlationId: req.correlationId,
+      error: error.message,
+    });
+    next(error);
+  }
+};
+
+/**
+ * GET /api/registrations (alias)
+ */
+exports.getRegistrations = async (req, res, next) => {
+  return exports.getAllRegistrations(req, res, next);
+};
+
+/**
+ * GET /api/registrations/:id (alias)
+ */
+exports.getRegistrationById = async (req, res, next) => {
+  return exports.getRegistration(req, res, next);
+};
+
+/**
+ * DELETE /api/registrations/:id
+ * Soft delete (imposta deleted_at). L'utente può cancellare solo le proprie.
+ * Admin può cancellare qualsiasi.
+ *
+ * 🔒 FIX 2026-09-25: aggiorna anche status='cancelled' e cancelled_at
+ */
+exports.deleteRegistration = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const registration = await Registration.findByPk(id);
+    if (!registration) {
+      const err = new Error(`Registration ${id} non trovata`);
+      err.status = 404;
+      return next(err);
+    }
+
+    // Owner check (solo se autenticato e non admin)
+    if (req.user) {
+      const isAdmin = req.user.role === 'admin';
+      const isOwner = registration.user_id === req.user.id;
+      if (!isAdmin && !isOwner) {
+        const err = new Error('Non autorizzato a cancellare questa candidatura');
+        err.status = 403;
+        return next(err);
+      }
+    }
+
+    const now = new Date().toISOString();
+
+    // 🔒 Soft delete + coerenza di stato
+    registration.deleted_at = now;
+    registration.status = 'cancelled';
+    registration.cancelled_at = now;
+    registration.updated_at = now;
+
+    await registration.save();
+
+    logger.info('🗑️ Candidatura cancellata (soft + status=cancelled)', {
+      correlationId: req.correlationId,
+      registrationId: id,
+      byUser: req.user ? req.user.id : 'anonymous',
+    });
+
+    res.json({ ok: true, message: 'Candidatura cancellata' });
   } catch (error) {
     next(error);
   }
+};
+
+/**
+ * POST /api/registrations/mark-exported
+ * ⚠️ DEPRECATA: la colonna `exported` non esiste nel DB.
+ */
+exports.markExported = async (req, res, next) => {
+  logger.warn('⚠️ markExported chiamata ma DEPRECATA', {
+    correlationId: req.correlationId,
+    body: req.body,
+  });
+
+  res.json({
+    ok: true,
+    deprecated: true,
+    message: 'Funzionalità deprecata: la colonna exported non esiste più nel DB.',
+    count: 0,
+  });
+};
+
+/**
+ * POST /api/registrations/mark-published
+ * ⚠️ DEPRECATA: la colonna `published` non esiste nel DB.
+ */
+exports.markPublished = async (req, res, next) => {
+  logger.warn('⚠️ markPublished chiamata ma DEPRECATA', {
+    correlationId: req.correlationId,
+    body: req.body,
+  });
+
+  res.json({
+    ok: true,
+    deprecated: true,
+    message: 'Funzionalità deprecata: la colonna published non esiste più nel DB.',
+    count: 0,
+  });
 };
